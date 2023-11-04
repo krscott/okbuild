@@ -1,0 +1,9 @@
+.vscode
+*.exe
+build
+.krs_tmp_build*
+*.obj
+*.o
+*.ilk
+*.pdb
+*.d
