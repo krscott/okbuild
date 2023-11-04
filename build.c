@@ -14,18 +14,18 @@
 static void clean(void) {
     log_info("Cleaning build files");
 
-    assert_ok(okb_glob_delete("*.ilk"));
-    assert_ok(okb_glob_delete("*.obj"));
-    assert_ok(okb_glob_delete("*.pdb"));
-    assert_ok(okb_glob_delete("*.o"));
-    assert_ok(okb_glob_delete("*.d"));
+    assert_ok(glob_delete("*.ilk"));
+    assert_ok(glob_delete("*.obj"));
+    assert_ok(glob_delete("*.pdb"));
+    assert_ok(glob_delete("*.o"));
+    assert_ok(glob_delete("*.d"));
 }
 
 static void run(char const* exe_filename, int argc, char* argv[]) {
     struct strbuf cmd = strbuf_init();
     strbuf_extend_cstr(&cmd, exe_filename);
     strbuf_extend_cli_args(&cmd, argc, argv);
-    (void)okb_system_ok(strbuf_as_cstr(cmd));
+    (void)run_command(strbuf_as_cstr(cmd));
     strbuf_deinit(&cmd);
 }
 

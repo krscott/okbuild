@@ -102,11 +102,11 @@ OKBAPI void okb_assert_ok_(enum okb_err err, char const* file, int line) {
     }
 }
 
-#define panic(msg)                                                                \
-    do {                                                                          \
-        fputs("Panic at " __FILE__ ":" STR(__LINE__) ": " msg, OKBUILD_LOG_FILE); \
-        assert(false); /* Trigger debugger */                                     \
-        exit(ERR_PANIC);                                                          \
+#define panic(msg)                                                                           \
+    do {                                                                                     \
+        fputs("Panic at " __FILE__ ":" STR_VALUE(__LINE__) ": " msg "\n", OKBUILD_LOG_FILE); \
+        assert(false); /* Trigger debugger */                                                \
+        exit(ERR_PANIC);                                                                     \
     } while (1)
 
 // Util functions
@@ -563,7 +563,7 @@ error:
 
 // Glob
 
-struct okb_glob {
+struct glob_handle {
     int error;
 #ifdef _WIN32
     char const* pattern;
@@ -575,8 +575,8 @@ struct okb_glob {
 #endif
 };
 
-OKBAPI struct okb_glob okb_glob_init(char const* const pattern) {
-    return (struct okb_glob){
+OKBAPI struct glob_handle glob_init(char const* const pattern) {
+    return (struct glob_handle){
         .error = 0,
         .pattern = pattern,
 #ifdef _WIN32
@@ -587,7 +587,7 @@ OKBAPI struct okb_glob okb_glob_init(char const* const pattern) {
     };
 }
 
-OKBAPI enum okb_err okb_glob_deinit(struct okb_glob* glob) {
+OKBAPI enum okb_err glob_deinit(struct glob_handle* glob) {
     glob->pattern = NULL;
 
 #ifdef _WIN32
@@ -611,7 +611,7 @@ OKBAPI enum okb_err okb_glob_deinit(struct okb_glob* glob) {
     return ERR_OK;
 }
 
-OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
+OKBAPI char const* glob_next(struct glob_handle* glob) {
     if (glob->error) return NULL;
     assert(glob->pattern);
 
@@ -653,13 +653,13 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
 #endif
 }
 
-OKBAPI enum okb_err okb_glob_delete(char const* const pattern) {
-    struct okb_glob glob = okb_glob_init(pattern);
-    for (char const* fname; (fname = okb_glob_next(&glob));) {
+OKBAPI enum okb_err glob_delete(char const* const pattern) {
+    struct glob_handle glob = glob_init(pattern);
+    for (char const* fname; (fname = glob_next(&glob));) {
         log_info("Deleting '%s'", fname);
         (void)okb_fs_remove(fname);
     }
-    return okb_glob_deinit(&glob);
+    return glob_deinit(&glob);
 }
 
 // System command
@@ -690,7 +690,7 @@ OKBAPI struct okb_system_res okb_system(char const* cmd) {
     }
 }
 
-OKBAPI enum okb_err okb_system_ok(char const* cmd) {
+OKBAPI enum okb_err run_command(char const* cmd) {
     struct okb_system_res res = okb_system(cmd);
     if (res.err) return res.err;
     if (res.exit_code != 0) {
@@ -786,7 +786,7 @@ OKBAPI void build_add_script_dependency(struct build* build, char const* filenam
     *vec_push(char const*, &build->build_c_deps) = filename;
 }
 
-OKBAPI void okb_path_replace_ext(struct strbuf* strbuf, char const* filename, char const* new_ext) {
+OKBAPI void path_replace_ext(struct strbuf* strbuf, char const* filename, char const* new_ext) {
     strbuf_clear(strbuf);
     strbuf_extend(strbuf, str_strip_file_ext(str_from_cstr(filename)));
     strbuf_push(strbuf, '.');
@@ -798,14 +798,15 @@ struct build_is_old_res {
     enum okb_err err;
 };
 
-OKBAPI struct build_is_old_res build_is_older_than(char const* filename, time_t mtime) {
+OKBAPI struct build_is_old_res is_file_older_than_time(char const* filename, time_t mtime) {
     struct okb_fs_stat_res stat_res = okb_fs_stat(filename);
     if (stat_res.err == ERR_FILE_DOES_NOT_EXIST) log_error("File does not exist: %s", filename);
     if (stat_res.err) return (struct build_is_old_res){.err = stat_res.err};
     return (struct build_is_old_res){.is_old = stat_res.stat.st_mtime > mtime};
 }
 
-OKBAPI struct build_is_old_res build_is_outdated(char const* filename, struct slice dependencies) {
+OKBAPI struct build_is_old_res
+is_file_older_than_dependencies(char const* filename, struct slice dependencies) {
     assert(dependencies.len > 0);
     assert(dependencies.element_size == sizeof(char*));
 
@@ -820,12 +821,12 @@ OKBAPI struct build_is_old_res build_is_outdated(char const* filename, struct sl
     for (char const** dep; (dep = slice_pop_front(char const*, &dependencies));) {
         if (cstr_contains_char(*dep, '*')) {
             // Compare all files matching glob pattern
-            struct okb_glob glob = okb_glob_init(*dep);
-            for (char const* fname; (fname = okb_glob_next(&glob));) {
-                res = build_is_older_than(fname, filename_mtime);
+            struct glob_handle glob = glob_init(*dep);
+            for (char const* fname; (fname = glob_next(&glob));) {
+                res = is_file_older_than_time(fname, filename_mtime);
                 if (res.err || res.is_old) break;
             }
-            enum okb_err err = okb_trace_err(okb_glob_deinit(&glob));
+            enum okb_err err = okb_trace_err(glob_deinit(&glob));
             if (err) {
                 res.err = err;
                 break;
@@ -833,7 +834,7 @@ OKBAPI struct build_is_old_res build_is_outdated(char const* filename, struct sl
             if (res.is_old) break;
         } else {
             // Compare single file
-            res = build_is_older_than(*dep, filename_mtime);
+            res = is_file_older_than_time(*dep, filename_mtime);
             if (res.err || res.is_old) break;
         }
     }
@@ -870,15 +871,15 @@ build_link(struct build const* build, char const* output_filename, struct slice 
     strbuf_extend_cstr(&cmd, output_filename);
 
     // Remove stale .pdb file
-    okb_path_replace_ext(&stale_filename, output_filename, "pdb");
+    path_replace_ext(&stale_filename, output_filename, "pdb");
     if (okb_trace_err(err = okb_fs_remove_if_exists(strbuf_as_cstr(stale_filename)))) goto error;
 
     // Remove stale .ilk file
-    okb_path_replace_ext(&stale_filename, output_filename, "ilk");
+    path_replace_ext(&stale_filename, output_filename, "ilk");
     if (okb_trace_err(err = okb_fs_remove_if_exists(strbuf_as_cstr(stale_filename)))) goto error;
 
     log_info("Linking: %s", strbuf_as_cstr(cmd));
-    if (okb_trace_err(err = okb_system_ok(strbuf_as_cstr(cmd)))) goto error;
+    if (okb_trace_err(err = run_command(strbuf_as_cstr(cmd)))) goto error;
 
 error:
     strbuf_deinit(&stale_filename);
@@ -906,7 +907,7 @@ OKBAPI enum okb_err build_compile(struct build const* build, char const* input_f
     strbuf_extend_cstr(&cmd, build->cflags);
 
     log_info("Compiling: %s", strbuf_as_cstr(cmd));
-    if (okb_trace_err(err = okb_system_ok(strbuf_as_cstr(cmd)))) goto error;
+    if (okb_trace_err(err = run_command(strbuf_as_cstr(cmd)))) goto error;
 
 error:
     strbuf_deinit(&cmd);
@@ -934,8 +935,8 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
                 struct strbuf src = strbuf_init();
                 struct strbuf dest = strbuf_init();
 
-                okb_path_replace_ext(&src, this_filename, "pdb");
-                okb_path_replace_ext(&dest, build->build_out_filename, "pdb");
+                path_replace_ext(&src, this_filename, "pdb");
+                path_replace_ext(&dest, build->build_out_filename, "pdb");
 
                 // delete old build.pdb
                 if ((err = okb_fs_remove_if_exists(strbuf_as_cstr(dest)))) goto win_cleanup_error;
@@ -946,8 +947,8 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
                         goto win_cleanup_error;
                 }
 
-                okb_path_replace_ext(&src, this_filename, "ilk");
-                okb_path_replace_ext(&dest, build->build_out_filename, "ilk");
+                path_replace_ext(&src, this_filename, "ilk");
+                path_replace_ext(&dest, build->build_out_filename, "ilk");
 
                 // delete old build.ilk
                 if ((err = okb_fs_remove_if_exists(strbuf_as_cstr(dest)))) goto win_cleanup_error;
@@ -989,11 +990,15 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
         struct vec deps = vec_init(char const*);
 
         // Check if main build script is out of date
-        res = build_is_outdated(build->build_out_filename, slice_of_one(&build->build_c_filename));
+        res = is_file_older_than_dependencies(
+            build->build_out_filename, slice_of_one(&build->build_c_filename)
+        );
         if ((err = res.err) || res.is_old) goto outdated_check_done;
 
         // Check if other build script dependencies are out of date
-        res = build_is_outdated(build->build_out_filename, slice_from_vec(build->build_c_deps));
+        res = is_file_older_than_dependencies(
+            build->build_out_filename, slice_from_vec(build->build_c_deps)
+        );
         if ((err = res.err) || res.is_old) goto outdated_check_done;
 
     outdated_check_done:
@@ -1024,7 +1029,7 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
         // Add CLI arguments
         strbuf_extend_cli_args(&cmd, argc, argv);
 
-        if (okb_trace_err(err = okb_system_ok(strbuf_as_cstr(cmd)))) goto rebuild_error;
+        if (okb_trace_err(err = run_command(strbuf_as_cstr(cmd)))) goto rebuild_error;
 
 #ifdef _WIN32
         // Spawn another process to overwrite real build binary with temporary
@@ -1032,7 +1037,7 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
         strbuf_clear(&cmd);
         strbuf_extend_cstr(&cmd, "start /b ");
         strbuf_extend_cstr(&cmd, tmp_build_filename);
-        if (okb_trace_err(err = okb_system_ok(strbuf_as_cstr(cmd)))) goto rebuild_error;
+        if (okb_trace_err(err = run_command(strbuf_as_cstr(cmd)))) goto rebuild_error;
 #else
         // Overwrite real build binary with temporary
         if (okb_trace_err(err = okb_fs_remove_if_exists(build->build_out_filename)))
@@ -1057,10 +1062,11 @@ OKBAPI enum okb_err compile_rule(
     struct slice dependency_filenames
 ) {
     if (!build->force_rebuild) {
-        struct build_is_old_res res = build_is_outdated(obj_filename, slice_of_one(&c_filename));
+        struct build_is_old_res res =
+            is_file_older_than_dependencies(obj_filename, slice_of_one(&c_filename));
         if (res.err) return res.err;
 
-        if (!res.is_old) res = build_is_outdated(obj_filename, dependency_filenames);
+        if (!res.is_old) res = is_file_older_than_dependencies(obj_filename, dependency_filenames);
         if (res.err) return res.err;
 
         if (!res.is_old) return ERR_OK;
@@ -1071,7 +1077,7 @@ OKBAPI enum okb_err compile_rule(
 OKBAPI enum okb_err
 link_rule(struct build const* build, char const* exe_filename, struct slice obj_filenames) {
     if (!build->force_rebuild) {
-        struct build_is_old_res res = build_is_outdated(exe_filename, obj_filenames);
+        struct build_is_old_res res = is_file_older_than_dependencies(exe_filename, obj_filenames);
         if (res.err) return res.err;
         if (!res.is_old) return ERR_OK;
     }
