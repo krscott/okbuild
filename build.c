@@ -17,7 +17,6 @@ static void clean(void) {
     assert_ok(glob_delete("*.ilk"));
     assert_ok(glob_delete("*.obj"));
     assert_ok(glob_delete("*.pdb"));
-    assert_ok(glob_delete("*.o"));
     assert_ok(glob_delete("*.d"));
 }
 
@@ -47,7 +46,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Compile project
-    char const* example_obj = obj_filename(build, "example");
+    char const* example_obj = "example.obj";
     char const* example_c_deps[] = {"build.exe", "build.c"};
     assert_ok(compile_rule(&build, example_obj, "example.c", slice_from_array(example_c_deps)));
 

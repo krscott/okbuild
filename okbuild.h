@@ -243,7 +243,7 @@ OKBAPI struct slice slice_from_vec(struct vec vec) {
 }
 
 #define slice_from_array(a) slice_from_array_((a), countof(a), sizeof(a[0]))
-OKBAPI struct slice slice_from_array_(void* arr, ptrdiff_t len, ptrdiff_t size) {
+OKBAPI struct slice slice_from_array_(void const* arr, ptrdiff_t len, ptrdiff_t size) {
     assert(arr);
     assert(len >= 0);
     assert(size > 0);
@@ -706,7 +706,7 @@ enum build_compiler_kind {
     COMPILER_UNKNOWN,
     COMPILER_CLANG,
     COMPILER_GCC,
-    COMPILER_CL,
+    COMPILER_MSVC,
 };
 
 #define OKB_ENVVAR_REBUILD "OKBUILD_REBUILD"
@@ -726,7 +726,7 @@ enum build_compiler_kind {
 #define DEFAULT_COMPILER_KIND COMPILER_GCC
 #elif defined(_MSC_BUILD)
 #define DEFAULT_COMPILER "cl"
-#define DEFAULT_COMPILER_KIND COMPILER_CL
+#define DEFAULT_COMPILER_KIND COMPILER_MSVC
 #else
 #define DEFAULT_COMPILER ""
 #define DEFAULT_COMPILER_KIND COMPILER_UNKNOWN
@@ -776,9 +776,6 @@ OKBAPI struct build build_init(void) {
 }
 
 OKBAPI void build_deinit(struct build* build) { vec_deinit(&build->build_c_deps); }
-
-#define obj_filename(build, basename) \
-    ((build).compiler_kind == COMPILER_GCC ? (basename ".o") : (basename ".obj"))
 
 #define exe_filename(build, basename) ((build).target_is_win_exe ? (basename ".exe") : (basename))
 
@@ -862,11 +859,10 @@ build_link(struct build const* build, char const* output_filename, struct slice 
     strbuf_push(&cmd, ' ');
     strbuf_extend_cstr(&cmd, build->cflags);
 
-    strbuf_push(&cmd, ' ');
-    if (build->compiler_kind == COMPILER_CL) {
-        strbuf_extend_cstr(&cmd, "/link /out:");
+    if (build->compiler_kind == COMPILER_MSVC) {
+        strbuf_extend_cstr(&cmd, " /link /out:");
     } else {
-        strbuf_extend_cstr(&cmd, "-o");
+        strbuf_extend_cstr(&cmd, " -o");
     }
     strbuf_extend_cstr(&cmd, output_filename);
 
@@ -888,16 +884,16 @@ error:
     return err;
 }
 
-OKBAPI enum okb_err build_compile(struct build const* build, char const* input_filename) {
+OKBAPI enum okb_err
+build_compile(struct build const* build, char const* output_filename, char const* input_filename) {
     enum okb_err err = ERR_OK;
 
     struct strbuf cmd = strbuf_init();
 
     strbuf_extend_cstr(&cmd, build->compiler);
 
-    if (build->compiler_kind != COMPILER_CL) {
-        strbuf_push(&cmd, ' ');
-        strbuf_extend_cstr(&cmd, "-c");
+    if (build->compiler_kind != COMPILER_MSVC) {
+        strbuf_extend_cstr(&cmd, " -c");
     }
 
     strbuf_push(&cmd, ' ');
@@ -905,6 +901,13 @@ OKBAPI enum okb_err build_compile(struct build const* build, char const* input_f
 
     strbuf_push(&cmd, ' ');
     strbuf_extend_cstr(&cmd, build->cflags);
+
+    if (build->compiler_kind == COMPILER_MSVC) {
+        strbuf_extend_cstr(&cmd, " /Fo");
+    } else {
+        strbuf_extend_cstr(&cmd, " -o");
+    }
+    strbuf_extend_cstr(&cmd, output_filename);
 
     log_info("Compiling: %s", strbuf_as_cstr(cmd));
     if (okb_trace_err(err = run_command(strbuf_as_cstr(cmd)))) goto error;
@@ -1071,7 +1074,7 @@ OKBAPI enum okb_err compile_rule(
 
         if (!res.is_old) return ERR_OK;
     }
-    return build_compile(build, c_filename);
+    return build_compile(build, obj_filename, c_filename);
 }
 
 OKBAPI enum okb_err
