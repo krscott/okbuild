@@ -29,6 +29,7 @@
 
 #define STR(x) #x
 #define STR_VALUE(x) STR(x)
+#define VA_FIRST(x, ...) x
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 
@@ -283,7 +284,7 @@ OKBAPI void const* slice_pop_back_(struct slice* slice, ptrdiff_t element_size) 
     return (void const*)((uintptr_t)slice->ptr + (--slice->len) * slice->element_size);
 }
 
-// String Buffer
+// String Slice
 
 struct str {
     char const* ptr;
@@ -317,6 +318,7 @@ OKBAPI struct str str_strip_file_ext(struct str path) {
 }
 
 // Dynamic string buffer
+
 struct strbuf {
     struct vec vec;
 };
@@ -377,6 +379,14 @@ OKBAPI void strbuf_extend_cstr(struct strbuf* strbuf, char const* cstr) {
     strbuf_extend(strbuf, str_from_cstr(cstr));
 }
 
+OKBAPI void strbuf_extend_cli_args(struct strbuf* cmd, int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        strbuf_extend_cstr(cmd, " \"");
+        strbuf_extend_cstr(cmd, argv[i]);
+        strbuf_push(cmd, '"');
+    }
+}
+
 // Filesystem
 
 OKBAPI char const* okb_fs_basename(char const* path) {
@@ -404,7 +414,7 @@ OKBAPI struct okb_fs_stat_res okb_fs_stat(char const* filename) {
     if (stat(filename, &st)) {
         if (errno == ENOENT) return (struct okb_fs_stat_res){.err = ERR_FILE_DOES_NOT_EXIST};
 
-        log_error("`krs_stat(\"%s\")`: %s (errno=%d)", filename, strerror(errno), errno);
+        log_error("`stat(\"%s\")`: %s (errno=%d)", filename, strerror(errno), errno);
         return (struct okb_fs_stat_res){.err = ERR_ERRNO};
     }
     return (struct okb_fs_stat_res){.stat = st};
@@ -733,8 +743,10 @@ enum build_compiler_kind {
 
 #ifdef _WIN32
 #define DEFAULT_OUT_FILENAME "build.exe"
+#define DEFAULT_IS_WIN_EXE true
 #else
 #define DEFAULT_OUT_FILENAME "build"
+#define DEFAULT_IS_WIN_EXE false
 #endif
 
 struct build {
@@ -745,6 +757,7 @@ struct build {
     char const* cflags;
     enum build_compiler_kind compiler_kind;
     bool force_rebuild;
+    bool target_is_win_exe;
     struct vec build_c_deps;
 };
 
@@ -757,11 +770,17 @@ OKBAPI struct build build_init(void) {
         .cflags = DEFAULT_CFLAGS,
         .compiler_kind = DEFAULT_COMPILER_KIND,
         .force_rebuild = false,
+        .target_is_win_exe = DEFAULT_IS_WIN_EXE,
         .build_c_deps = vec_init(char*),
     };
 }
 
 OKBAPI void build_deinit(struct build* build) { vec_deinit(&build->build_c_deps); }
+
+#define obj_filename(build, basename) \
+    ((build).compiler_kind == COMPILER_GCC ? (basename ".o") : (basename ".obj"))
+
+#define exe_filename(build, basename) ((build).target_is_win_exe ? (basename ".exe") : (basename))
 
 OKBAPI void build_add_script_dependency(struct build* build, char const* filename) {
     *vec_push(char const*, &build->build_c_deps) = filename;
@@ -774,29 +793,29 @@ OKBAPI void okb_path_replace_ext(struct strbuf* strbuf, char const* filename, ch
     strbuf_extend(strbuf, str_from_cstr(new_ext));
 }
 
-struct build_is_old {
+struct build_is_old_res {
     bool is_old;
     enum okb_err err;
 };
 
-OKBAPI struct build_is_old build_is_older_than(char const* filename, time_t mtime) {
+OKBAPI struct build_is_old_res build_is_older_than(char const* filename, time_t mtime) {
     struct okb_fs_stat_res stat_res = okb_fs_stat(filename);
     if (stat_res.err == ERR_FILE_DOES_NOT_EXIST) log_error("File does not exist: %s", filename);
-    if (stat_res.err) return (struct build_is_old){.err = stat_res.err};
-    return (struct build_is_old){.is_old = stat_res.stat.st_mtime > mtime};
+    if (stat_res.err) return (struct build_is_old_res){.err = stat_res.err};
+    return (struct build_is_old_res){.is_old = stat_res.stat.st_mtime > mtime};
 }
 
-OKBAPI struct build_is_old build_is_outdated(char const* filename, struct slice dependencies) {
+OKBAPI struct build_is_old_res build_is_outdated(char const* filename, struct slice dependencies) {
     assert(dependencies.len > 0);
     assert(dependencies.element_size == sizeof(char*));
 
     struct okb_fs_stat_res stat_res = okb_fs_stat(filename);
-    if (stat_res.err == ERR_FILE_DOES_NOT_EXIST) return (struct build_is_old){.is_old = true};
-    if (okb_trace_err(stat_res.err)) return (struct build_is_old){.err = stat_res.err};
+    if (stat_res.err == ERR_FILE_DOES_NOT_EXIST) return (struct build_is_old_res){.is_old = true};
+    if (okb_trace_err(stat_res.err)) return (struct build_is_old_res){.err = stat_res.err};
 
     time_t filename_mtime = stat_res.stat.st_mtime;
 
-    struct build_is_old res = (struct build_is_old){.is_old = false};
+    struct build_is_old_res res = (struct build_is_old_res){.is_old = false};
 
     for (char const** dep; (dep = slice_pop_front(char const*, &dependencies));) {
         if (cstr_contains_char(*dep, '*')) {
@@ -966,7 +985,7 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
 
     // Check if need to rebuild
     if (!build->force_rebuild) {
-        struct build_is_old res;
+        struct build_is_old_res res;
         struct vec deps = vec_init(char const*);
 
         // Check if main build script is out of date
@@ -1003,11 +1022,7 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
         strbuf_extend_cstr(&cmd, tmp_build_filename);
 
         // Add CLI arguments
-        for (int i = 1; i < argc; ++i) {
-            strbuf_extend_cstr(&cmd, " \"");
-            strbuf_extend_cstr(&cmd, argv[i]);
-            strbuf_push(&cmd, '"');
-        }
+        strbuf_extend_cli_args(&cmd, argc, argv);
 
         if (okb_trace_err(err = okb_system_ok(strbuf_as_cstr(cmd)))) goto rebuild_error;
 
@@ -1033,6 +1048,34 @@ OKBAPI enum okb_err build_rebuild_script(struct build* build, int argc, char* ar
 
 done:
     return err;
+}
+
+OKBAPI enum okb_err compile_rule(
+    struct build const* build,
+    char const* obj_filename,
+    char const* c_filename,
+    struct slice dependency_filenames
+) {
+    if (!build->force_rebuild) {
+        struct build_is_old_res res = build_is_outdated(obj_filename, slice_of_one(&c_filename));
+        if (res.err) return res.err;
+
+        if (!res.is_old) res = build_is_outdated(obj_filename, dependency_filenames);
+        if (res.err) return res.err;
+
+        if (!res.is_old) return ERR_OK;
+    }
+    return build_compile(build, c_filename);
+}
+
+OKBAPI enum okb_err
+link_rule(struct build const* build, char const* exe_filename, struct slice obj_filenames) {
+    if (!build->force_rebuild) {
+        struct build_is_old_res res = build_is_outdated(exe_filename, obj_filenames);
+        if (res.err) return res.err;
+        if (!res.is_old) return ERR_OK;
+    }
+    return build_link(build, exe_filename, obj_filenames);
 }
 
 OKBAPI bool subcmd(char const* const cmd, int argc, char* argv[]) {
