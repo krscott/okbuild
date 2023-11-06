@@ -1011,14 +1011,14 @@ OKBAPI enum okb_err okb_compile_rule(
     char const* c_filename,
     struct okb_cslist dependency_filenames
 ) {
-    enum okb_err err;
-
     // Generate .obj filename, and add it to list
     struct okb_cstring obj_filename = okb_cstring_init_with_cstr(c_filename);
     okb_cstring_replace_ext(&obj_filename, "obj");
     okb_cslist_push(out_object_filenames, obj_filename);
 
     char const* const obj_cstr = okb_cstring_as_cstr(obj_filename);
+
+    enum okb_err err = OKB_OK;
 
     if (!build->force_rebuild) {
         // Check if C file or any dependencies were updated
@@ -1027,11 +1027,12 @@ OKBAPI enum okb_err okb_compile_rule(
         okb_cslist_extend(&deps, dependency_filenames);
 
         struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(obj_cstr, deps);
-        if ((err = res.err) || !res.is_old) goto done;
+        err = res.err;
+        if (err || !res.is_old) goto done;
     }
 
     // Compile
-    err = okb_build_compile(build, obj_cstr, c_filename) || err;
+    err = okb_build_compile(build, obj_cstr, c_filename);
 
 done:
     return err;
@@ -1047,13 +1048,14 @@ OKBAPI enum okb_err link_rule(
         okb_cstring_replace_ext(&binary_filename, "exe");
     }
 
-    enum okb_err err;
+    enum okb_err err = OKB_OK;
 
     if (!build->force_rebuild) {
         struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(
             okb_cstring_as_cstr(binary_filename), object_filenames
         );
-        if ((err = res.err || !res.is_old)) goto done;
+        err = res.err;
+        if (err || !res.is_old) goto done;
     }
 
     err = okb_build_link(build, okb_cstring_as_cstr(binary_filename), object_filenames);
