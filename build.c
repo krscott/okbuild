@@ -12,32 +12,32 @@
 #include "okbuild.h"
 
 static void clean(void) {
-    log_info("Cleaning build files");
+    okb_info("Cleaning build files");
 
-    assert_ok(glob_delete("*.ilk"));
-    assert_ok(glob_delete("*.obj"));
-    assert_ok(glob_delete("*.pdb"));
-    assert_ok(glob_delete("*.d"));
+    okb_assert_ok(okb_fs_delete_glob("*.ilk"));
+    okb_assert_ok(okb_fs_delete_glob("*.obj"));
+    okb_assert_ok(okb_fs_delete_glob("*.pdb"));
+    okb_assert_ok(okb_fs_delete_glob("*.d"));
 }
 
 static void run(char const* exe_filename, int argc, char* argv[]) {
-    struct strbuf cmd = strbuf_init();
-    strbuf_extend_cstr(&cmd, exe_filename);
-    strbuf_extend_cli_args(&cmd, argc, argv);
-    (void)run_command(strbuf_as_cstr(cmd));
-    strbuf_deinit(&cmd);
+    struct okb_cstring cmd = okb_cstring_init_with_cstr(exe_filename);
+    okb_cstring_extend_cli_args(&cmd, argc, argv);
+    (void)okb_run(okb_cstring_as_cstr(cmd));
+    okb_cstring_deinit(&cmd);
 }
 
 int main(int argc, char* argv[]) {
-    struct build build = build_init();
+    struct okb_build build = okb_build_init();
+    struct okb_cslist object_files = okb_cslist_init();
 
     if (subcmd("rebuild", argc, argv)) {
         build.force_rebuild = true;
     }
 
     // Rebuild build script if okbuild.h changes
-    build_add_script_dependency(&build, "okbuild.h");
-    assert_ok(build_rebuild_script(&build, argc, argv));
+    okb_build_add_script_dependency(&build, "okbuild.h");
+    okb_assert_ok(okb_rebuild_script(&build, argc, argv));
 
     // Clean project directory
     if (subcmd("clean", argc, argv)) {
@@ -46,21 +46,22 @@ int main(int argc, char* argv[]) {
     }
 
     // Compile project
-    char const* example_obj = "example.obj";
-    char const* example_c_deps[] = {"build.exe", "build.c"};
-    assert_ok(compile_rule(&build, example_obj, "example.c", slice_from_array(example_c_deps)));
+    struct okb_cslist example_c_deps = okb_cslist_init();
+    okb_cslist_push_cstr(&example_c_deps, "build.exe");
+    okb_cslist_push_cstr(&example_c_deps, "build.c");
+    okb_assert_ok(okb_compile_rule(&object_files, &build, "example.c", example_c_deps));
+    okb_cslist_deinit(&example_c_deps);
 
     // Link project
-    char const* example_exe = exe_filename(build, "example");
-    char const* example_exe_deps[] = {example_obj};
-    assert_ok(link_rule(&build, example_exe, slice_from_array(example_exe_deps)));
+    okb_assert_ok(link_rule(&build, "example", object_files));
 
     // Run project
     if (subcmd("run", argc, argv)) {
-        run(example_exe, argc - 1, &argv[1]);
+        run("example", argc - 1, &argv[1]);
         goto done;
     }
 
 done:
-    build_deinit(&build);
+    okb_cslist_deinit(&object_files);
+    okb_build_deinit(&build);
 }
