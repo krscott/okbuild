@@ -11,6 +11,8 @@
 
 #include "okbuild.h"
 
+#define APP_NAME "example"
+
 static void clean(void) {
     okb_info("Cleaning build files");
 
@@ -46,18 +48,17 @@ int main(int argc, char* argv[]) {
     }
 
     // Compile project
-    struct okb_cslist example_c_deps = okb_cslist_init();
-    okb_cslist_push_cstr(&example_c_deps, "build.exe");
-    okb_cslist_push_cstr(&example_c_deps, "build.c");
-    okb_assert_ok(okb_compile_rule(&object_files, &build, "example.c", example_c_deps));
-    okb_cslist_deinit(&example_c_deps);
+    struct okb_cslist app_deps = okb_cslist_init();
+    okb_cslist_push_cstr(&app_deps, APP_NAME ".h");
+    okb_assert_ok(okb_compile_rule(&object_files, &build, APP_NAME ".c", app_deps));
+    okb_cslist_deinit(&app_deps);
 
     // Link project
-    okb_assert_ok(okb_link_rule(&build, "example", object_files));
+    okb_assert_ok(okb_link_rule(&build, APP_NAME, object_files));
 
     // Run project
     if (okb_subcmd("run", argc, argv)) {
-        run("example", argc - 1, &argv[1]);
+        run(APP_NAME, argc - 1, &argv[1]);
         goto done;
     }
 
