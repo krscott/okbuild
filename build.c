@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
     struct okb_build build = okb_build_init();
     struct okb_cslist object_files = okb_cslist_init();
 
-    if (subcmd("rebuild", argc, argv)) {
+    if (okb_subcmd("rebuild", argc, argv)) {
         build.force_rebuild = true;
     }
 
@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
     okb_assert_ok(okb_rebuild_script(&build, argc, argv));
 
     // Clean project directory
-    if (subcmd("clean", argc, argv)) {
+    if (okb_subcmd("clean", argc, argv)) {
         clean();
         goto done;
     }
@@ -53,10 +53,10 @@ int main(int argc, char* argv[]) {
     okb_cslist_deinit(&example_c_deps);
 
     // Link project
-    okb_assert_ok(link_rule(&build, "example", object_files));
+    okb_assert_ok(okb_link_rule(&build, "example", object_files));
 
     // Run project
-    if (subcmd("run", argc, argv)) {
+    if (okb_subcmd("run", argc, argv)) {
         run("example", argc - 1, &argv[1]);
         goto done;
     }

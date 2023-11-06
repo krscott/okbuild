@@ -65,7 +65,7 @@ enum okb_err {
     OKB_SUBPROC,
 };
 
-OKBAPI char* okb_okb_cstr(enum okb_err err) {
+OKBAPI char* okb_err_cstr(enum okb_err err) {
     switch (err) {
         case OKB_OK:
             return "No error";
@@ -84,10 +84,10 @@ OKBAPI char* okb_okb_cstr(enum okb_err err) {
     }
 }
 
-#define okb_trace_err(err) okb_trace_OKB_((err), __FILE__, __LINE__)
-OKBAPI enum okb_err okb_trace_OKB_(enum okb_err err, char const* file, int line) {
+#define okb_trace_err(err) okb_trace_err_((err), __FILE__, __LINE__)
+OKBAPI enum okb_err okb_trace_err_(enum okb_err err, char const* file, int line) {
     if (err) {
-        okb_error("%s:%d %s", file, line, okb_okb_cstr(err));
+        okb_error("%s:%d %s", file, line, okb_err_cstr(err));
     }
     return err;
 }
@@ -95,7 +95,7 @@ OKBAPI enum okb_err okb_trace_OKB_(enum okb_err err, char const* file, int line)
 #define okb_assert_ok(err) okb_assert_ok_((err), __FILE__, __LINE__)
 OKBAPI void okb_assert_ok_(enum okb_err err, char const* file, int line) {
     if (err) {
-        okb_fatal("%s:%d %s", file, line, okb_okb_cstr(err));
+        okb_fatal("%s:%d %s", file, line, okb_err_cstr(err));
         assert(false); /* Trigger debugger */
         exit((int)err);
     }
@@ -703,20 +703,20 @@ enum okb_compiler_kind {
 #endif
 
 #if defined(_MSC_BUILD)
-#define DEFAULT_CFLAGS "/D /Wall /Zi /Zc:preprocessor"
+#define OKB_DEFAULT_CFLAGS "/D /Wall /Zi /Zc:preprocessor"
 #elif defined(__zig_cc__)
 // `__zig_cc__` must be provided manually when running zig cc
-#define DEFAULT_CFLAGS "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g"
+#define OKB_DEFAULT_CFLAGS "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g"
 #else
-#define DEFAULT_CFLAGS "-Wall -Wextra -pedantic -Werror -g"
+#define OKB_DEFAULT_CFLAGS "-Wall -Wextra -pedantic -Werror -g"
 #endif
 
 #ifdef _WIN32
-#define DEFAULT_OUT_FILENAME "build.exe"
-#define DEFAULT_IS_WIN_EXE true
+#define OKB_DEFAULT_OUT_FILENAME "build.exe"
+#define OKB_DEFAULT_IS_WIN_EXE true
 #else
-#define DEFAULT_OUT_FILENAME "build"
-#define DEFAULT_IS_WIN_EXE false
+#define OKB_DEFAULT_OUT_FILENAME "build"
+#define OKB_DEFAULT_IS_WIN_EXE false
 #endif
 
 struct okb_build {
@@ -735,12 +735,12 @@ OKBAPI struct okb_build okb_build_init(void) {
     return (struct okb_build){
         .config_filename = OKB_DEFAULT_CONFIG_FILE,
         .build_c_filename = OKB_DEFAULT_BUILD_C,
-        .build_out_filename = DEFAULT_OUT_FILENAME,
+        .build_out_filename = OKB_DEFAULT_OUT_FILENAME,
         .compiler = OKB_DEFAULT_COMPILER,
-        .cflags = DEFAULT_CFLAGS,
+        .cflags = OKB_DEFAULT_CFLAGS,
         .compiler_kind = OKB_DEFAULT_COMPILER_KIND,
         .force_rebuild = false,
-        .target_is_win_exe = DEFAULT_IS_WIN_EXE,
+        .target_is_win_exe = OKB_DEFAULT_IS_WIN_EXE,
         .script_deps = okb_cslist_init(),
     };
 }
@@ -1038,7 +1038,7 @@ done:
     return err;
 }
 
-OKBAPI enum okb_err link_rule(
+OKBAPI enum okb_err okb_link_rule(
     struct okb_build const* build,
     char const* binary_name,
     struct okb_cslist object_filenames
@@ -1065,7 +1065,7 @@ done:
     return err;
 }
 
-OKBAPI bool subcmd(char const* const cmd, int argc, char* argv[]) {
+OKBAPI bool okb_subcmd(char const* const cmd, int argc, char* argv[]) {
     if (argc < 2) return false;
     return strcmp(cmd, argv[1]) == 0;
 }
