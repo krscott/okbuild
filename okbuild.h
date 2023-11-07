@@ -127,6 +127,7 @@ OKBAPI ptrdiff_t okb_next_power_of_2(ptrdiff_t n) {
 }
 
 OKBAPI bool okb_cstr_contains_char(char const* s, char c) {
+    assert(s);
     while (*s) {
         if (*s == c) return true;
         ++s;
@@ -135,6 +136,7 @@ OKBAPI bool okb_cstr_contains_char(char const* s, char c) {
 }
 
 OKBAPI bool okb_cstr_ends_with(char const* s, char const* end) {
+    assert(s);
     ptrdiff_t const s_len = strlen(s);
     ptrdiff_t const end_len = strlen(end);
     if (end_len > s_len) return false;
@@ -188,6 +190,7 @@ OKBAPI void okb_free(void* ptr) { OKBUILD_FREE(ptr); }
     do {                                                                \
         struct da_struct_name* da_ = (da_ptr);                          \
         ptrdiff_t n_ = (nelem);                                         \
+        assert(da_);                                                    \
         if (n_ <= 0) break;                                             \
         da_struct_name##_reserve(da_, n_);                              \
         memmove(&da_->buf[da_->len], (data), n_ * sizeof(da_->buf[0])); \
@@ -197,6 +200,7 @@ OKBAPI void okb_free(void* ptr) { OKBUILD_FREE(ptr); }
 #define OKB_DA_PUSH(da_struct_name, da_ptr, elem) \
     do {                                          \
         struct da_struct_name* da_ = (da_ptr);    \
+        assert(da_);                              \
         da_struct_name##_reserve(da_, 1);         \
         da_->buf[da_->len++] = (elem);            \
     } while (0)
@@ -239,6 +243,8 @@ OKBAPI void okb_cstring_extend(struct okb_cstring* cs, ptrdiff_t n, char const* 
 }
 
 OKBAPI void okb_cstring_extend_cstr(struct okb_cstring* cs, char const* cstr) {
+    assert(cs);
+    assert(cstr);
     okb_cstring_extend(cs, strlen(cstr), cstr);
 }
 
@@ -250,6 +256,7 @@ OKBAPI void okb_cstring_push(struct okb_cstring* cs, char c) {
 OKBAPI char const* okb_cstring_as_cstr(struct okb_cstring cs) { return cs.buf; }
 
 OKBAPI struct okb_cstring okb_cstring_init_with_cstr(char const* cstr) {
+    assert(cstr);
     struct okb_cstring cs = okb_cstring_init();
     cs.len = strlen(cstr);
     if (cs.len > 0) {
@@ -277,6 +284,8 @@ OKBAPI void okb_cstring_strip_file_ext(struct okb_cstring* cs) {
 }
 
 OKBAPI void okb_cstring_replace_ext(struct okb_cstring* cs, char const* new_ext) {
+    assert(cs);
+    assert(new_ext);
     okb_cstring_strip_file_ext(cs);
     okb_cstring_push(cs, '.');
     okb_cstring_extend_cstr(cs, new_ext);
@@ -329,6 +338,7 @@ OKBAPI struct okb_cslist okb_cslist_init_with_cstrs(ptrdiff_t n, char* cstrs[]) 
 }
 
 OKBAPI void okb_cslist_deinit(struct okb_cslist* list) {
+    assert(list);
     if (list->buf) {
         for (ptrdiff_t i = 0; i < list->len; ++i) {
             okb_cstring_deinit(okb_cslist_get(*list, i));
@@ -346,16 +356,19 @@ OKBAPI void okb_cslist_push(struct okb_cslist* list, struct okb_cstring cstring_
 }
 
 OKBAPI void okb_cslist_push_cstr(struct okb_cslist* list, char const* cstr) {
+    assert(list);
     okb_cslist_push(list, okb_cstring_init_with_cstr(cstr));
 }
 
 OKBAPI void okb_cslist_extend(struct okb_cslist* list, struct okb_cslist other) {
+    assert(list);
     for (ptrdiff_t i = 0; i < other.len; ++i) {
         okb_cslist_push_cstr(list, okb_cslist_get_cstr(other, i));
     }
 }
 
 OKBAPI void okb_cslist_extend_cstrs(struct okb_cslist* list, ptrdiff_t n, char const** cstrs) {
+    assert(list);
     for (ptrdiff_t i = 0; i < n; ++i) {
         okb_cslist_push_cstr(list, cstrs[i]);
     }
@@ -364,6 +377,7 @@ OKBAPI void okb_cslist_extend_cstrs(struct okb_cslist* list, ptrdiff_t n, char c
 // Filesystem
 
 OKBAPI char const* okb_fs_basename(char const* path) {
+    assert(path);
 #ifdef _MSC_BUILD
     static char scratch[100];
     _splitpath_s(path, NULL, 0, NULL, 0, scratch, sizeof(scratch), NULL, 0);
@@ -384,6 +398,7 @@ struct okb_fs_stat_res {
     enum okb_err err;
 };
 OKBAPI struct okb_fs_stat_res okb_fs_stat(char const* filename) {
+    assert(filename);
     struct stat st;
     if (stat(filename, &st)) {
         if (errno == ENOENT) return (struct okb_fs_stat_res){.err = OKB_FILE_DOES_NOT_EXIST};
@@ -397,6 +412,7 @@ OKBAPI struct okb_fs_stat_res okb_fs_stat(char const* filename) {
 OKBAPI bool okb_fs_exists(char const* filename) { return !okb_fs_stat(filename).err; }
 
 OKBAPI enum okb_err okb_fs_remove(char const* filename) {
+    assert(filename);
     // okb_debug("`remove(\"%s\")`", filename);
     if (remove(filename)) {
         okb_error("`remove(\"%s\")`: %s (errno=%d)", filename, strerror(errno), errno);
@@ -406,12 +422,15 @@ OKBAPI enum okb_err okb_fs_remove(char const* filename) {
 }
 
 OKBAPI enum okb_err okb_fs_remove_if_exists(char const* filename) {
+    assert(filename);
     // okb_debug("`okb_fs_remove_if_exists(\"%s\")`", filename);
     if (okb_fs_exists(filename)) return okb_fs_remove(filename);
     return OKB_OK;
 }
 
 OKBAPI enum okb_err okb_fs_rename(char const* src, char const* dest) {
+    assert(src);
+    assert(dest);
     // okb_debug("`rename(\"%s\", \"%s\")`", src, dest);
     if (rename(src, dest)) {
         okb_error("`rename(\"%s\", \"%s\")`: %s (errno=%d)", src, dest, strerror(errno), errno);
@@ -426,6 +445,8 @@ struct okb_fs_fopen_res {
 };
 
 OKBAPI struct okb_fs_fopen_res okb_fs_open(char const* filename, char const* mode) {
+    assert(filename);
+    assert(mode);
     FILE* fp = fopen(filename, mode);
     if (!fp) {
         okb_error("fopen(\"%s\", \"%s\"): %s (errno=%d)", filename, mode, strerror(errno), errno);
@@ -435,6 +456,7 @@ OKBAPI struct okb_fs_fopen_res okb_fs_open(char const* filename, char const* mod
 }
 
 OKBAPI enum okb_err okb_fs_close(FILE* fp) {
+    assert(fp);
     if (fclose(fp)) {
         okb_error("Could not close: %s (errno=%d)", strerror(errno), errno);
         return OKB_ERRNO;
@@ -443,6 +465,8 @@ OKBAPI enum okb_err okb_fs_close(FILE* fp) {
 }
 
 OKBAPI enum okb_err okb_fs_puts(char const* s, FILE* fp) {
+    assert(s);
+    assert(fp);
     if (fputs(s, fp) == EOF) {
         okb_error("File write: %s (errno=%d)", strerror(errno), errno);
         return OKB_ERRNO;
@@ -451,6 +475,8 @@ OKBAPI enum okb_err okb_fs_puts(char const* s, FILE* fp) {
 }
 
 OKBAPI enum okb_err okb_fs_printf(FILE* fp, char const* fmt, ...) {
+    assert(fp);
+    assert(fmt);
     va_list args;
     va_start(args, fmt);
     int bytes = vfprintf(fp, fmt, args);
@@ -465,6 +491,8 @@ OKBAPI enum okb_err okb_fs_printf(FILE* fp, char const* fmt, ...) {
 }
 
 OKBAPI enum okb_err okb_fs_copy(char const* src, char const* dest) {
+    assert(src);
+    assert(dest);
 #if defined(_WIN32)
     if (!CopyFileA(src, dest, 0)) {
         okb_error("`CopyFile(\"%s\", \"%s\", 0)` failed (error=%lu)", src, dest, GetLastError());
@@ -550,6 +578,7 @@ struct okb_glob {
 };
 
 OKBAPI struct okb_glob okb_glob_init(char const* const pattern) {
+    assert(pattern);
     return (struct okb_glob){
         .error = 0,
         .pattern = pattern,
@@ -586,6 +615,7 @@ OKBAPI enum okb_err okb_glob_deinit(struct okb_glob* glob) {
 }
 
 OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
+    assert(glob);
     if (glob->error) return NULL;
     assert(glob->pattern);
 
@@ -628,6 +658,7 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
 }
 
 OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern) {
+    assert(pattern);
     struct okb_glob glob = okb_glob_init(pattern);
     for (char const* fname; (fname = okb_glob_next(&glob));) {
         okb_info("Deleting '%s'", fname);
@@ -637,6 +668,8 @@ OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern) {
 }
 
 OKBAPI enum okb_err okb_cslist_add_glob(struct okb_cslist* list, char const* pattern) {
+    assert(list);
+    assert(pattern);
     struct okb_glob glob = okb_glob_init(pattern);
     for (char const* fname; (fname = okb_glob_next(&glob));) {
         okb_cslist_push_cstr(list, fname);
@@ -652,6 +685,7 @@ struct okb_system_res {
 };
 
 OKBAPI struct okb_system_res okb_system(char const* cmd) {
+    assert(cmd);
     ptrdiff_t cmd_err = system(cmd);
     switch (cmd_err) {
         case -1:
@@ -673,6 +707,7 @@ OKBAPI struct okb_system_res okb_system(char const* cmd) {
 }
 
 OKBAPI enum okb_err okb_run(char const* cmd) {
+    assert(cmd);
     struct okb_system_res res = okb_system(cmd);
     if (res.err) return res.err;
     if (res.exit_code != 0) {
@@ -744,6 +779,8 @@ struct okb_build {
 };
 
 OKBAPI struct okb_build* okb_build_init(int argc, char* argv[]) {
+    assert(argc >= 1);
+    assert(argv);
     struct okb_build* build = okb_alloc(1, sizeof(struct okb_build));
     *build = (struct okb_build){
         .build_c_filename = OKB_DEFAULT_BUILD_C,
@@ -760,10 +797,15 @@ OKBAPI struct okb_build* okb_build_init(int argc, char* argv[]) {
     return build;
 }
 
-OKBAPI void okb_build_deinit(struct okb_build* build) { okb_cslist_deinit(&build->script_deps); }
+OKBAPI void okb_build_deinit(struct okb_build* build) {
+    assert(build);
+    okb_cslist_deinit(&build->script_deps);
+}
 
 // Add a filename (or glob pattern of filenames) to the build.c script dependency list.
 OKBAPI void okb_build_add_script_dependency(struct okb_build* build, char const* filename) {
+    assert(build);
+    assert(filename);
     okb_cslist_add_glob(&build->script_deps, filename);
 }
 
@@ -773,6 +815,7 @@ struct okb_build_is_old_res {
 };
 
 OKBAPI struct okb_build_is_old_res okb_is_file_older_than_time(char const* filename, time_t mtime) {
+    assert(filename);
     struct okb_fs_stat_res stat_res = okb_fs_stat(filename);
     if (stat_res.err == OKB_FILE_DOES_NOT_EXIST) okb_error("File does not exist: %s", filename);
     if (stat_res.err) return (struct okb_build_is_old_res){.err = stat_res.err};
@@ -781,6 +824,7 @@ OKBAPI struct okb_build_is_old_res okb_is_file_older_than_time(char const* filen
 
 OKBAPI struct okb_build_is_old_res
 okb_is_file_older_than_dependencies(char const* filename, struct okb_cslist dependencies) {
+    assert(filename);
     assert(dependencies.len > 0);
 
     struct okb_fs_stat_res stat_res = okb_fs_stat(filename);
@@ -805,6 +849,8 @@ OKBAPI enum okb_err okb_build_link(
     char const* output_filename,
     struct okb_cslist input_filenames
 ) {
+    assert(build);
+    assert(output_filename);
     assert(input_filenames.len > 0);
 
     enum okb_err err = OKB_OK;
@@ -852,6 +898,9 @@ OKBAPI enum okb_err okb_build_compile(
     char const* output_filename,
     char const* input_filename
 ) {
+    assert(build);
+    assert(output_filename);
+    assert(input_filename);
     enum okb_err err = OKB_OK;
 
     struct okb_cstring cmd = okb_cstring_init_with_cstr(build->compiler);
@@ -883,6 +932,7 @@ error:
 }
 
 OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
+    assert(build);
     enum okb_err err = OKB_OK;
 
     // Check if we are in a child process
@@ -1026,6 +1076,9 @@ OKBAPI enum okb_err okb_compile_rule(
     char const* c_filename,
     struct okb_cslist dependency_filenames
 ) {
+    assert(out_object_filenames);
+    assert(build);
+    assert(c_filename);
     // Generate .obj filename, and add it to list
     struct okb_cstring obj_filename = okb_cstring_init_with_cstr(c_filename);
     okb_cstring_replace_ext(&obj_filename, "obj");
@@ -1058,6 +1111,8 @@ OKBAPI enum okb_err okb_link_rule(
     char const* binary_name,
     struct okb_cslist object_filenames
 ) {
+    assert(build);
+    assert(binary_name);
     struct okb_cstring binary_filename = okb_cstring_init_with_cstr(binary_name);
     if (build->target_is_win_exe) {
         okb_cstring_replace_ext(&binary_filename, "exe");
@@ -1081,6 +1136,8 @@ done:
 }
 
 OKBAPI bool okb_subcmd(struct okb_build* build, char const* cmd) {
+    assert(build);
+    assert(cmd);
     if (build->argc < 2) return false;
     return strcmp(cmd, build->argv[1]) == 0;
 }
