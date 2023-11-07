@@ -30,7 +30,7 @@ static void run(char const* exe_filename, int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-    struct okb_build* build = okb_build_init(argc, argv);
+    struct okb_build* build = okb_build_init(__FILE__, argc, argv);
     struct okb_cslist example_object_files = okb_cslist_init();
 
     if (okb_subcmd(build, "rebuild")) {

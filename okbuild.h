@@ -749,7 +749,9 @@ struct okb_build {
     char** argv;
 };
 
-struct okb_compiler_settings {
+struct okb_settings {
+    char const* build_c_filename;
+    char const* build_out_filename;
     char const* cc;
     char const* cflags;
     char const* lflags;
@@ -758,7 +760,7 @@ struct okb_compiler_settings {
     char const* link_out_flag;
 };
 
-static struct okb_compiler_settings const okb_settings_zig_cc = {
+static struct okb_settings const okb_settings_zig_cc = {
     .cc = "zig cc",
     .cflags = "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g",
     .lflags = "",
@@ -767,7 +769,7 @@ static struct okb_compiler_settings const okb_settings_zig_cc = {
     .link_out_flag = "-o",
 };
 
-static struct okb_compiler_settings const okb_settings_clang = {
+static struct okb_settings const okb_settings_clang = {
     .cc = "clang",
     .cflags = "-Wall -Wextra -pedantic -Werror -g",
     .lflags = "",
@@ -776,7 +778,7 @@ static struct okb_compiler_settings const okb_settings_clang = {
     .link_out_flag = "-o",
 };
 
-static struct okb_compiler_settings const okb_settings_gcc = {
+static struct okb_settings const okb_settings_gcc = {
     .cc = "gcc",
     .cflags = "-Wall -Wextra -pedantic -Werror -g",
     .lflags = "",
@@ -785,7 +787,7 @@ static struct okb_compiler_settings const okb_settings_gcc = {
     .link_out_flag = "-o",
 };
 
-static struct okb_compiler_settings const okb_settings_msvc = {
+static struct okb_settings const okb_settings_msvc = {
     .cc = "cl",
     .cflags = "/Wall /Zi /Zc:preprocessor",
     .lflags = "",
@@ -808,7 +810,7 @@ static struct okb_compiler_settings const okb_settings_msvc = {
 #elif defined(_MSC_BUILD)
 #define OKB_DEFAULT_COMPILER_SETTINGS okb_settings_msvc
 #else
-#define OKB_DEFAULT_COMPILER_SETTINGS ((struct okb_compiler_settings){0})
+#define OKB_DEFAULT_COMPILER_SETTINGS ((struct okb_settings){0})
 #endif
 
 #ifdef _WIN32
@@ -819,7 +821,11 @@ static struct okb_compiler_settings const okb_settings_msvc = {
 #define OKB_DEFAULT_IS_WIN_EXE false
 #endif
 
-OKBAPI void okb_build_set_compiler(struct okb_build* build, struct okb_compiler_settings settings) {
+OKBAPI void okb_build_set(struct okb_build* build, struct okb_settings settings) {
+    if (settings.build_c_filename)  //
+        okb_cstring_set_cstr(&build->build_c_filename, settings.build_c_filename);
+    if (settings.build_out_filename)  //
+        okb_cstring_set_cstr(&build->build_out_filename, settings.build_out_filename);
     if (settings.cc)  //
         okb_cstring_set_cstr(&build->cc, settings.cc);
     if (settings.cflags)  //
@@ -834,12 +840,12 @@ OKBAPI void okb_build_set_compiler(struct okb_build* build, struct okb_compiler_
         okb_cstring_set_cstr(&build->link_out_flag, settings.link_out_flag);
 }
 
-OKBAPI struct okb_build* okb_build_init(int argc, char* argv[]) {
+OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, char* argv[]) {
     assert(argc >= 1);
     assert(argv);
     struct okb_build* build = okb_alloc(1, sizeof(struct okb_build));
     *build = (struct okb_build){
-        .build_c_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_BUILD_C),
+        .build_c_filename = okb_cstring_init_with_cstr(build_c_filename),
         .build_out_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_OUT_FILENAME),
         .cc = okb_cstring_init(),
         .cflags = okb_cstring_init(),
@@ -854,7 +860,7 @@ OKBAPI struct okb_build* okb_build_init(int argc, char* argv[]) {
         .argv = argv,
     };
 
-    okb_build_set_compiler(build, OKB_DEFAULT_COMPILER_SETTINGS);
+    okb_build_set(build, OKB_DEFAULT_COMPILER_SETTINGS);
 
     return build;
 }
