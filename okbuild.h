@@ -233,10 +233,9 @@ OKBAPI void okb_cstring_reserve(struct okb_cstring* cs, ptrdiff_t additional) {
     OKB_DA_RESERVE(okb_cstring, cs, additional + 1);  // +1 for null terminator
 }
 
-OKBAPI void okb_cstring_extend(struct okb_cstring* cs, ptrdiff_t n, char const* bytes) {
-    OKB_DA_EXTEND(okb_cstring, cs, n, bytes);
-
+OKBAPI void okb_cstring_extend_chars(struct okb_cstring* cs, ptrdiff_t n, char const* chars) {
     if (n > 0) {
+        OKB_DA_EXTEND(okb_cstring, cs, n, chars);
         assert(cs->len < cs->cap);
         cs->buf[cs->len] = '\0';
     }
@@ -245,7 +244,16 @@ OKBAPI void okb_cstring_extend(struct okb_cstring* cs, ptrdiff_t n, char const* 
 OKBAPI void okb_cstring_extend_cstr(struct okb_cstring* cs, char const* cstr) {
     assert(cs);
     assert(cstr);
-    okb_cstring_extend(cs, strlen(cstr), cstr);
+    okb_cstring_extend_chars(cs, strlen(cstr), cstr);
+}
+
+OKBAPI void okb_cstring_extend(struct okb_cstring* cs, struct okb_cstring other) {
+    okb_cstring_extend_chars(cs, other.len, other.buf);
+}
+
+OKBAPI void okb_cstring_set_cstr(struct okb_cstring* cs, char const* cstr) {
+    okb_cstring_clear(cs);
+    okb_cstring_extend_cstr(cs, cstr);
 }
 
 OKBAPI void okb_cstring_push(struct okb_cstring* cs, char c) {
@@ -260,11 +268,17 @@ OKBAPI struct okb_cstring okb_cstring_init_with_cstr(char const* cstr) {
     struct okb_cstring cs = okb_cstring_init();
     cs.len = strlen(cstr);
     if (cs.len > 0) {
+        // Usually this is a cstr clone that won't be modified again, so
+        // just reserve the exact amount of bytes needed.
         cs.cap = cs.len + 1;  // +1 for null terminator
         cs.buf = okb_alloc(cs.cap, sizeof(char*));
         strcpy(cs.buf, cstr);
     }
     return cs;
+}
+
+OKBAPI struct okb_cstring okb_cstring_clone(struct okb_cstring cs) {
+    return okb_cstring_init_with_cstr(okb_cstring_as_cstr(cs));
 }
 
 OKBAPI void okb_cstring_strip_file_ext(struct okb_cstring* cs) {
@@ -719,11 +733,65 @@ OKBAPI enum okb_err okb_run(char const* cmd) {
 
 // Build
 
-enum okb_compiler_kind {
-    OKB_COMPILER_UNKNOWN,
-    OKB_COMPILER_CLANG,
-    OKB_COMPILER_GCC,
-    OKB_COMPILER_MSVC,
+struct okb_build {
+    struct okb_cstring build_c_filename;
+    struct okb_cstring build_out_filename;
+    struct okb_cstring cc;
+    struct okb_cstring cflags;
+    struct okb_cstring lflags;
+    struct okb_cstring compile_in_flag;
+    struct okb_cstring compile_out_flag;
+    struct okb_cstring link_out_flag;
+    bool force_rebuild;
+    bool target_is_win_exe;
+    struct okb_cslist script_deps;
+    int argc;
+    char** argv;
+};
+
+struct okb_compiler_settings {
+    char const* cc;
+    char const* cflags;
+    char const* lflags;
+    char const* compile_in_flag;
+    char const* compile_out_flag;
+    char const* link_out_flag;
+};
+
+static struct okb_compiler_settings const okb_settings_zig_cc = {
+    .cc = "zig cc",
+    .cflags = "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g",
+    .lflags = "",
+    .compile_in_flag = "-c",
+    .compile_out_flag = "-o",
+    .link_out_flag = "-o",
+};
+
+static struct okb_compiler_settings const okb_settings_clang = {
+    .cc = "clang",
+    .cflags = "-Wall -Wextra -pedantic -Werror -g",
+    .lflags = "",
+    .compile_in_flag = "-c",
+    .compile_out_flag = "-o",
+    .link_out_flag = "-o",
+};
+
+static struct okb_compiler_settings const okb_settings_gcc = {
+    .cc = "gcc",
+    .cflags = "-Wall -Wextra -pedantic -Werror -g",
+    .lflags = "",
+    .compile_in_flag = "-c",
+    .compile_out_flag = "-o",
+    .link_out_flag = "-o",
+};
+
+static struct okb_compiler_settings const okb_settings_msvc = {
+    .cc = "cl",
+    .cflags = "/Wall /Zi /Zc:preprocessor",
+    .lflags = "",
+    .compile_in_flag = "",
+    .compile_out_flag = "/Fo",
+    .link_out_flag = "/link /out:",
 };
 
 #define OKB_ENVVAR_REBUILD "OKBUILD_REBUILD"
@@ -732,29 +800,15 @@ enum okb_compiler_kind {
 
 #if defined(__zig_cc__)
 // `__zig_cc__` must be provided manually when running zig cc
-#define OKB_DEFAULT_COMPILER "zig cc"
-#define OKB_DEFAULT_COMPILER_KIND OKB_COMPILER_CLANG
+#define OKB_DEFAULT_COMPILER_SETTINGS okb_settings_zig_cc
 #elif defined(__clang__)
-#define OKB_DEFAULT_COMPILER "clang"
-#define OKB_DEFAULT_COMPILER_KIND OKB_COMPILER_CLANG
+#define OKB_DEFAULT_COMPILER_SETTINGS okb_settings_clang
 #elif defined(__GNUC__)
-#define OKB_DEFAULT_COMPILER "gcc"
-#define OKB_DEFAULT_COMPILER_KIND OKB_COMPILER_GCC
+#define OKB_DEFAULT_COMPILER_SETTINGS okb_settings_gcc
 #elif defined(_MSC_BUILD)
-#define OKB_DEFAULT_COMPILER "cl"
-#define OKB_DEFAULT_COMPILER_KIND OKB_COMPILER_MSVC
+#define OKB_DEFAULT_COMPILER_SETTINGS okb_settings_msvc
 #else
-#define OKB_DEFAULT_COMPILER ""
-#define OKB_DEFAULT_COMPILER_KIND OKB_COMPILER_UNKNOWN
-#endif
-
-#if defined(_MSC_BUILD)
-#define OKB_DEFAULT_CFLAGS "/D /Wall /Zi /Zc:preprocessor"
-#elif defined(__zig_cc__)
-// `__zig_cc__` must be provided manually when running zig cc
-#define OKB_DEFAULT_CFLAGS "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g"
-#else
-#define OKB_DEFAULT_CFLAGS "-Wall -Wextra -pedantic -Werror -g"
+#define OKB_DEFAULT_COMPILER_SETTINGS ((struct okb_compiler_settings){0})
 #endif
 
 #ifdef _WIN32
@@ -765,35 +819,43 @@ enum okb_compiler_kind {
 #define OKB_DEFAULT_IS_WIN_EXE false
 #endif
 
-struct okb_build {
-    char const* build_c_filename;
-    char const* build_out_filename;
-    char const* compiler;
-    char const* cflags;
-    enum okb_compiler_kind compiler_kind;
-    bool force_rebuild;
-    bool target_is_win_exe;
-    struct okb_cslist script_deps;
-    int argc;
-    char** argv;
-};
+OKBAPI void okb_build_set_compiler(struct okb_build* build, struct okb_compiler_settings settings) {
+    if (settings.cc)  //
+        okb_cstring_set_cstr(&build->cc, settings.cc);
+    if (settings.cflags)  //
+        okb_cstring_set_cstr(&build->cflags, settings.cflags);
+    if (settings.lflags)  //
+        okb_cstring_set_cstr(&build->lflags, settings.lflags);
+    if (settings.compile_in_flag)  //
+        okb_cstring_set_cstr(&build->compile_in_flag, settings.compile_in_flag);
+    if (settings.compile_out_flag)  //
+        okb_cstring_set_cstr(&build->compile_out_flag, settings.compile_out_flag);
+    if (settings.link_out_flag)  //
+        okb_cstring_set_cstr(&build->link_out_flag, settings.link_out_flag);
+}
 
 OKBAPI struct okb_build* okb_build_init(int argc, char* argv[]) {
     assert(argc >= 1);
     assert(argv);
     struct okb_build* build = okb_alloc(1, sizeof(struct okb_build));
     *build = (struct okb_build){
-        .build_c_filename = OKB_DEFAULT_BUILD_C,
-        .build_out_filename = OKB_DEFAULT_OUT_FILENAME,
-        .compiler = OKB_DEFAULT_COMPILER,
-        .cflags = OKB_DEFAULT_CFLAGS,
-        .compiler_kind = OKB_DEFAULT_COMPILER_KIND,
+        .build_c_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_BUILD_C),
+        .build_out_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_OUT_FILENAME),
+        .cc = okb_cstring_init(),
+        .cflags = okb_cstring_init(),
+        .lflags = okb_cstring_init(),
+        .compile_in_flag = okb_cstring_init(),
+        .compile_out_flag = okb_cstring_init(),
+        .link_out_flag = okb_cstring_init(),
         .force_rebuild = false,
         .target_is_win_exe = OKB_DEFAULT_IS_WIN_EXE,
         .script_deps = okb_cslist_init(),
         .argc = argc,
         .argv = argv,
     };
+
+    okb_build_set_compiler(build, OKB_DEFAULT_COMPILER_SETTINGS);
+
     return build;
 }
 
@@ -855,7 +917,7 @@ OKBAPI enum okb_err okb_build_link(
 
     enum okb_err err = OKB_OK;
 
-    struct okb_cstring cmd = okb_cstring_init_with_cstr(build->compiler);
+    struct okb_cstring cmd = okb_cstring_init_with_cstr(okb_cstring_as_cstr(build->cc));
     struct okb_cstring output_filename_owned = okb_cstring_init_with_cstr(output_filename);
 
     for (ptrdiff_t i = 0; i < input_filenames.len; ++i) {
@@ -863,14 +925,19 @@ OKBAPI enum okb_err okb_build_link(
         okb_cstring_extend_cstr(&cmd, okb_cslist_get_cstr(input_filenames, i));
     }
 
-    okb_cstring_push(&cmd, ' ');
-    okb_cstring_extend_cstr(&cmd, build->cflags);
-
-    if (build->compiler_kind == OKB_COMPILER_MSVC) {
-        okb_cstring_extend_cstr(&cmd, " /link /out:");
-    } else {
-        okb_cstring_extend_cstr(&cmd, " -o");
+    // Link step may include compile step
+    if (build->cflags.len) {
+        okb_cstring_push(&cmd, ' ');
+        okb_cstring_extend(&cmd, build->cflags);
     }
+
+    if (build->lflags.len) {
+        okb_cstring_push(&cmd, ' ');
+        okb_cstring_extend(&cmd, build->lflags);
+    }
+
+    okb_cstring_push(&cmd, ' ');
+    okb_cstring_extend(&cmd, build->link_out_flag);  // e.g. "-o" or "/link /out:"
     okb_cstring_extend_cstr(&cmd, output_filename);
 
     // Remove stale .pdb file
@@ -903,23 +970,25 @@ OKBAPI enum okb_err okb_build_compile(
     assert(input_filename);
     enum okb_err err = OKB_OK;
 
-    struct okb_cstring cmd = okb_cstring_init_with_cstr(build->compiler);
+    struct okb_cstring cmd = okb_cstring_init();
 
-    if (build->compiler_kind != OKB_COMPILER_MSVC) {
-        okb_cstring_extend_cstr(&cmd, " -c");
+    okb_cstring_extend(&cmd, build->cc);
+
+    if (build->compile_in_flag.len) {
+        okb_cstring_push(&cmd, ' ');
+        okb_cstring_extend(&cmd, build->compile_in_flag);  // e.g. "-c"
     }
 
     okb_cstring_push(&cmd, ' ');
     okb_cstring_extend_cstr(&cmd, input_filename);
 
-    okb_cstring_push(&cmd, ' ');
-    okb_cstring_extend_cstr(&cmd, build->cflags);
-
-    if (build->compiler_kind == OKB_COMPILER_MSVC) {
-        okb_cstring_extend_cstr(&cmd, " /Fo");
-    } else {
-        okb_cstring_extend_cstr(&cmd, " -o");
+    if (build->cflags.len) {
+        okb_cstring_push(&cmd, ' ');
+        okb_cstring_extend(&cmd, build->cflags);
     }
+
+    okb_cstring_push(&cmd, ' ');
+    okb_cstring_extend(&cmd, build->compile_out_flag);  // e.g. "-o" or "/Fo"
     okb_cstring_extend_cstr(&cmd, output_filename);
 
     okb_info("Compiling: %s", okb_cstring_as_cstr(cmd));
@@ -952,7 +1021,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
                 // TODO: Clean this up
 
                 struct okb_cstring src = okb_cstring_init_with_cstr(this_filename);
-                struct okb_cstring dest = okb_cstring_init_with_cstr(build->build_out_filename);
+                struct okb_cstring dest = okb_cstring_clone(build->build_out_filename);
 
                 okb_cstring_replace_ext(&src, "pdb");
                 okb_cstring_replace_ext(&dest, "pdb");
@@ -994,9 +1063,13 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
                 for (ptrdiff_t retry = 1; retry <= 10; ++retry) {
                     Sleep(delay_ms);
                     delay_ms *= 2;
-                    if ((err = okb_fs_remove_if_exists(build->build_out_filename))) continue;
-                    if ((err = okb_fs_rename(this_filename, build->build_out_filename))) continue;
-                    break;
+                    err = okb_fs_remove_if_exists(okb_cstring_as_cstr(build->build_out_filename));
+                    if (!err) {
+                        err = okb_fs_rename(
+                            this_filename, okb_cstring_as_cstr(build->build_out_filename)
+                        );
+                    }
+                    if (!err) break;
                 }
                 if (okb_trace_err(err)) return err;
             }
@@ -1009,11 +1082,12 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
     if (!build->force_rebuild) {
         struct okb_cslist deps = okb_cslist_init();
 
-        okb_cslist_push_cstr(&deps, build->build_c_filename);
+        okb_cslist_push(&deps, okb_cstring_clone(build->build_c_filename));
         okb_cslist_extend(&deps, build->script_deps);
 
-        struct okb_build_is_old_res res =
-            okb_is_file_older_than_dependencies(build->build_out_filename, deps);
+        struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(
+            okb_cstring_as_cstr(build->build_out_filename), deps
+        );
 
         okb_cslist_deinit(&deps);
 
@@ -1022,13 +1096,14 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
 
     // Rebuild, run, and exit
     {
-        char const* const tmp_build_filename = okb_cstr_ends_with(build->build_out_filename, ".exe")
-                                                   ? ".okb_rebuild.exe"
-                                                   : ".okb_rebuild";
+        char const* const tmp_build_filename =
+            okb_cstr_ends_with(okb_cstring_as_cstr(build->build_out_filename), ".exe")
+                ? ".okb_rebuild.exe"
+                : ".okb_rebuild";
 
         struct okb_cstring cmd = okb_cstring_init();
         struct okb_cslist link_deps = okb_cslist_init();
-        okb_cslist_push_cstr(&link_deps, build->build_c_filename);
+        okb_cslist_push(&link_deps, okb_cstring_clone(build->build_c_filename));
 
         okb_info("Rebuilding build script");
 
