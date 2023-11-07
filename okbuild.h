@@ -235,6 +235,7 @@ OKBAPI void okb_cstring_reserve(struct okb_cstring* cs, ptrdiff_t additional) {
 
 OKBAPI void okb_cstring_extend_chars(struct okb_cstring* cs, ptrdiff_t n, char const* chars) {
     if (n > 0) {
+        assert(chars);
         OKB_DA_EXTEND(okb_cstring, cs, n, chars);
         assert(cs->len < cs->cap);
         cs->buf[cs->len] = '\0';
@@ -381,10 +382,23 @@ OKBAPI void okb_cslist_extend(struct okb_cslist* list, struct okb_cslist other) 
     }
 }
 
-OKBAPI void okb_cslist_extend_cstrs(struct okb_cslist* list, ptrdiff_t n, char const** cstrs) {
+OKBAPI void okb_cslist_extend_cstrs(struct okb_cslist* list, ptrdiff_t n, char** cstrs) {
     assert(list);
     for (ptrdiff_t i = 0; i < n; ++i) {
         okb_cslist_push_cstr(list, cstrs[i]);
+    }
+}
+
+OKBAPI void
+okb_cslist_extend_split_cstr(struct okb_cslist* list, char const* cstr, char const* delims) {
+    okb_cslist_push(list, okb_cstring_init());
+
+    for (; *cstr != 0; ++cstr) {
+        if (okb_cstr_contains_char(delims, *cstr)) {
+            okb_cslist_push(list, okb_cstring_init());
+        } else {
+            okb_cstring_push(&list->buf[list->len - 1], *cstr);
+        }
     }
 }
 
@@ -392,9 +406,12 @@ OKBAPI void okb_cslist_extend_cstrs(struct okb_cslist* list, ptrdiff_t n, char c
 
 OKBAPI char const* okb_fs_basename(char const* path) {
     assert(path);
+    static char scratch[260];
+    assert(strlen(path) < okb_countof(scratch));
+    strncpy(scratch, path, okb_countof(scratch) - 1);
+
 #ifdef _MSC_BUILD
-    static char scratch[100];
-    _splitpath_s(path, NULL, 0, NULL, 0, scratch, sizeof(scratch), NULL, 0);
+    _splitpath_s(path, NULL, 0, NULL, 0, scratch, okb_countof(scratch), NULL, 0);
     char const* out = strstr(path, scratch);
     if (!out) {
         okb_warn("Could not find basename of %s", path);
@@ -403,7 +420,27 @@ OKBAPI char const* okb_fs_basename(char const* path) {
     return out;
 #else
     // libgen.h
-    return basename((char*)path);
+    return basename(scratch);
+#endif
+}
+
+OKBAPI char const* okb_fs_dirname(char const* path) {
+    assert(path);
+    static char scratch[260];
+    assert(strlen(path) < okb_countof(scratch));
+    strncpy(scratch, path, okb_countof(scratch) - 1);
+
+#ifdef _MSC_BUILD
+    _splitpath_s(path, NULL, 0, scratch, okb_countof(scratch), NULL, 0, NULL, 0);
+    char const* out = strstr(path, scratch);
+    if (!out) {
+        okb_warn("Could not find dirname of %s", path);
+        return path;
+    }
+    return out;
+#else
+    // libgen.h
+    return dirname(scratch);
 #endif
 }
 
@@ -423,11 +460,61 @@ OKBAPI struct okb_fs_stat_res okb_fs_stat(char const* filename) {
     return (struct okb_fs_stat_res){.stat = st};
 }
 
+OKBAPI enum okb_err okb_fs_mkdir(char const* path) {
+    int mkdir_err;
+    errno = 0;
+
+#ifdef _WIN32
+    mkdir_err = mkdir(path);
+#else
+    mkdir_err = mkdir(path, 0755);
+#endif
+
+    if (mkdir_err) {
+        okb_error("`mkdir(\"%s\")`: %s (errno=%d)", path, strerror(errno), errno);
+        return OKB_ERRNO;
+    }
+    return OKB_OK;
+}
+
 OKBAPI bool okb_fs_exists(char const* filename) { return !okb_fs_stat(filename).err; }
+
+OKBAPI bool okb_fs_isdir(char const* path) {
+    struct okb_fs_stat_res res = okb_fs_stat(path);
+    if (res.err) return false;
+    return S_ISDIR(res.stat.st_mode);
+}
+
+OKBAPI enum okb_err okb_fs_mkdir_p(char const* path) {
+    assert(path);
+    if (path[0] == '\0') return OKB_OK;
+
+    enum okb_err err = OKB_OK;
+    struct okb_cstring path_tmp = okb_cstring_init_with_cstr(path);
+
+    char* partial_path = path_tmp.buf;
+    assert(partial_path);
+    for (char* p = partial_path; *p; ++p) {
+        if (*p == '/' || *p == '\\') {
+            *p = '\0';
+            if (!okb_fs_isdir(partial_path)) {
+                if ((err = okb_fs_mkdir(partial_path))) goto error;
+            }
+            *p = '/';
+        }
+    }
+
+    if (!okb_fs_isdir(partial_path)) {
+        if ((err = okb_fs_mkdir(partial_path))) goto error;
+    }
+
+error:
+    okb_cstring_deinit(&path_tmp);
+    return err;
+}
 
 OKBAPI enum okb_err okb_fs_remove(char const* filename) {
     assert(filename);
-    // okb_debug("`remove(\"%s\")`", filename);
     if (remove(filename)) {
         okb_error("`remove(\"%s\")`: %s (errno=%d)", filename, strerror(errno), errno);
         return OKB_ERRNO;
@@ -437,7 +524,6 @@ OKBAPI enum okb_err okb_fs_remove(char const* filename) {
 
 OKBAPI enum okb_err okb_fs_remove_if_exists(char const* filename) {
     assert(filename);
-    // okb_debug("`okb_fs_remove_if_exists(\"%s\")`", filename);
     if (okb_fs_exists(filename)) return okb_fs_remove(filename);
     return OKB_OK;
 }
@@ -445,7 +531,6 @@ OKBAPI enum okb_err okb_fs_remove_if_exists(char const* filename) {
 OKBAPI enum okb_err okb_fs_rename(char const* src, char const* dest) {
     assert(src);
     assert(dest);
-    // okb_debug("`rename(\"%s\", \"%s\")`", src, dest);
     if (rename(src, dest)) {
         okb_error("`rename(\"%s\", \"%s\")`: %s (errno=%d)", src, dest, strerror(errno), errno);
         return OKB_ERRNO;
@@ -673,10 +758,11 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
 
 OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern) {
     assert(pattern);
+    okb_debug("Pattern: %s", pattern);
     struct okb_glob glob = okb_glob_init(pattern);
     for (char const* fname; (fname = okb_glob_next(&glob));) {
         okb_info("Deleting '%s'", fname);
-        (void)okb_fs_remove(fname);
+        // (void)okb_fs_remove(fname);
     }
     return okb_glob_deinit(&glob);
 }
@@ -736,6 +822,7 @@ OKBAPI enum okb_err okb_run(char const* cmd) {
 struct okb_build {
     struct okb_cstring build_c_filename;
     struct okb_cstring build_out_filename;
+    struct okb_cstring obj_dir;
     struct okb_cstring cc;
     struct okb_cstring cflags;
     struct okb_cstring lflags;
@@ -752,6 +839,7 @@ struct okb_build {
 struct okb_settings {
     char const* build_c_filename;
     char const* build_out_filename;
+    char const* obj_dir;
     char const* cc;
     char const* cflags;
     char const* lflags;
@@ -759,6 +847,23 @@ struct okb_settings {
     char const* compile_out_flag;
     char const* link_out_flag;
 };
+
+OKBAPI void okb_build_set(struct okb_build* build, struct okb_settings settings) {
+#define OKB_SET_(x) \
+    if (settings.x) okb_cstring_set_cstr(&build->x, settings.x)
+
+    OKB_SET_(build_c_filename);
+    OKB_SET_(build_out_filename);
+    OKB_SET_(obj_dir);
+    OKB_SET_(cc);
+    OKB_SET_(cflags);
+    OKB_SET_(lflags);
+    OKB_SET_(compile_in_flag);
+    OKB_SET_(compile_out_flag);
+    OKB_SET_(link_out_flag);
+
+#undef OKB_SET_
+}
 
 static struct okb_settings const okb_settings_zig_cc = {
     .cc = "zig cc",
@@ -798,8 +903,6 @@ static struct okb_settings const okb_settings_msvc = {
 
 #define OKB_ENVVAR_REBUILD "OKBUILD_REBUILD"
 
-#define OKB_DEFAULT_BUILD_C "build.c"
-
 #if defined(__zig_cc__)
 // `__zig_cc__` must be provided manually when running zig cc
 #define OKB_DEFAULT_COMPILER_SETTINGS okb_settings_zig_cc
@@ -821,24 +924,7 @@ static struct okb_settings const okb_settings_msvc = {
 #define OKB_DEFAULT_IS_WIN_EXE false
 #endif
 
-OKBAPI void okb_build_set(struct okb_build* build, struct okb_settings settings) {
-    if (settings.build_c_filename)  //
-        okb_cstring_set_cstr(&build->build_c_filename, settings.build_c_filename);
-    if (settings.build_out_filename)  //
-        okb_cstring_set_cstr(&build->build_out_filename, settings.build_out_filename);
-    if (settings.cc)  //
-        okb_cstring_set_cstr(&build->cc, settings.cc);
-    if (settings.cflags)  //
-        okb_cstring_set_cstr(&build->cflags, settings.cflags);
-    if (settings.lflags)  //
-        okb_cstring_set_cstr(&build->lflags, settings.lflags);
-    if (settings.compile_in_flag)  //
-        okb_cstring_set_cstr(&build->compile_in_flag, settings.compile_in_flag);
-    if (settings.compile_out_flag)  //
-        okb_cstring_set_cstr(&build->compile_out_flag, settings.compile_out_flag);
-    if (settings.link_out_flag)  //
-        okb_cstring_set_cstr(&build->link_out_flag, settings.link_out_flag);
-}
+#define OKB_DEFAULT_OBJ_DIR "_build"
 
 OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, char* argv[]) {
     assert(argc >= 1);
@@ -847,6 +933,7 @@ OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, 
     *build = (struct okb_build){
         .build_c_filename = okb_cstring_init_with_cstr(build_c_filename),
         .build_out_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_OUT_FILENAME),
+        .obj_dir = okb_cstring_init_with_cstr(OKB_DEFAULT_OBJ_DIR),
         .cc = okb_cstring_init(),
         .cflags = okb_cstring_init(),
         .lflags = okb_cstring_init(),
@@ -976,6 +1063,8 @@ OKBAPI enum okb_err okb_build_compile(
     assert(input_filename);
     enum okb_err err = OKB_OK;
 
+    if ((err = okb_fs_mkdir_p(okb_fs_dirname(output_filename)))) goto error1;
+
     struct okb_cstring cmd = okb_cstring_init();
 
     okb_cstring_extend(&cmd, build->cc);
@@ -998,11 +1087,11 @@ OKBAPI enum okb_err okb_build_compile(
     okb_cstring_extend_cstr(&cmd, output_filename);
 
     okb_info("Compiling: %s", okb_cstring_as_cstr(cmd));
-    if (okb_trace_err(err = okb_run(okb_cstring_as_cstr(cmd)))) goto error;
+    if (okb_trace_err(err = okb_run(okb_cstring_as_cstr(cmd)))) goto error2;
 
-error:
+error2:
     okb_cstring_deinit(&cmd);
-
+error1:
     return err;
 }
 
@@ -1017,7 +1106,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
         // If already rebuilt, then return
         if (rebuild_state && strcmp(rebuild_state, "1") == 0) goto done;
 
-        char const* this_filename = okb_fs_basename((char*)build->argv[0]);
+        char const* this_filename = okb_fs_basename(build->argv[0]);
 
 #ifdef _WIN32
         // Windows cleanup
@@ -1160,14 +1249,16 @@ OKBAPI enum okb_err okb_compile_rule(
     assert(out_object_filenames);
     assert(build);
     assert(c_filename);
+    enum okb_err err = OKB_OK;
+
     // Generate .obj filename, and add it to list
-    struct okb_cstring obj_filename = okb_cstring_init_with_cstr(c_filename);
+    struct okb_cstring obj_filename = okb_cstring_clone(build->obj_dir);
+    okb_cstring_push(&obj_filename, '/');
+    okb_cstring_extend_cstr(&obj_filename, c_filename);
     okb_cstring_replace_ext(&obj_filename, "obj");
     okb_cslist_push(out_object_filenames, obj_filename);
 
     char const* const obj_cstr = okb_cstring_as_cstr(obj_filename);
-
-    enum okb_err err = OKB_OK;
 
     if (!build->force_rebuild) {
         // Check if C file or any dependencies were updated

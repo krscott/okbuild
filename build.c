@@ -16,10 +16,8 @@
 static void clean(void) {
     okb_info("Cleaning build files");
 
-    okb_assert_ok(okb_fs_delete_glob("*.ilk"));
-    okb_assert_ok(okb_fs_delete_glob("*.obj"));
+    okb_assert_ok(okb_fs_delete_glob("_build/*"));
     okb_assert_ok(okb_fs_delete_glob("*.pdb"));
-    okb_assert_ok(okb_fs_delete_glob("*.d"));
 }
 
 static void run(char const* exe_filename, int argc, char* argv[]) {
