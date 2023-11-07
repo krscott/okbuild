@@ -30,19 +30,19 @@ static void run(char const* exe_filename, int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-    struct okb_build build = okb_build_init();
-    struct okb_cslist object_files = okb_cslist_init();
+    struct okb_build* build = okb_build_init(argc, argv);
+    struct okb_cslist example_object_files = okb_cslist_init();
 
-    if (okb_subcmd("rebuild", argc, argv)) {
-        build.force_rebuild = true;
+    if (okb_subcmd(build, "rebuild")) {
+        build->force_rebuild = true;
     }
 
     // Rebuild build script if okbuild.h changes
-    okb_build_add_script_dependency(&build, "okbuild.h");
-    okb_assert_ok(okb_rebuild_script(&build, argc, argv));
+    okb_build_add_script_dependency(build, "okbuild.h");
+    okb_assert_ok(okb_rebuild_script(build));
 
     // Clean project directory
-    if (okb_subcmd("clean", argc, argv)) {
+    if (okb_subcmd(build, "clean")) {
         clean();
         goto done;
     }
@@ -50,19 +50,19 @@ int main(int argc, char* argv[]) {
     // Compile project
     struct okb_cslist app_deps = okb_cslist_init();
     okb_cslist_push_cstr(&app_deps, APP_NAME ".h");
-    okb_assert_ok(okb_compile_rule(&object_files, &build, APP_NAME ".c", app_deps));
+    okb_assert_ok(okb_compile_rule(&example_object_files, build, APP_NAME ".c", app_deps));
     okb_cslist_deinit(&app_deps);
 
     // Link project
-    okb_assert_ok(okb_link_rule(&build, APP_NAME, object_files));
+    okb_assert_ok(okb_link_rule(build, APP_NAME, example_object_files));
 
     // Run project
-    if (okb_subcmd("run", argc, argv)) {
+    if (okb_subcmd(build, "run")) {
         run(APP_NAME, argc - 1, &argv[1]);
         goto done;
     }
 
 done:
-    okb_cslist_deinit(&object_files);
-    okb_build_deinit(&build);
+    okb_cslist_deinit(&example_object_files);
+    okb_build_deinit(build);
 }

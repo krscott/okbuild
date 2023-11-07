@@ -282,7 +282,7 @@ OKBAPI void okb_cstring_replace_ext(struct okb_cstring* cs, char const* new_ext)
     okb_cstring_extend_cstr(cs, new_ext);
 }
 
-OKBAPI void okb_cstring_extend_cli_args(struct okb_cstring* cs, int argc, char* argv[]) {
+OKBAPI void okb_cstring_extend_cli_args(struct okb_cstring* cs, int argc, char** argv) {
     assert(cs);
     assert(argc >= 1);
     assert(argv);
@@ -315,6 +315,18 @@ OKBAPI char const* okb_cslist_get_cstr(struct okb_cslist list, ptrdiff_t i) {
 }
 
 OKBAPI struct okb_cslist okb_cslist_init(void) { return (struct okb_cslist){0}; }
+
+OKBAPI struct okb_cslist okb_cslist_init_with_cstrs(ptrdiff_t n, char* cstrs[]) {
+    struct okb_cslist list = {
+        .buf = okb_alloc(n, sizeof(struct okb_cstring)),
+        .len = n,
+        .cap = n,
+    };
+    for (ptrdiff_t i = 0; i < n; ++i) {
+        list.buf[i] = okb_cstring_init_with_cstr(cstrs[i]);
+    }
+    return list;
+}
 
 OKBAPI void okb_cslist_deinit(struct okb_cslist* list) {
     if (list->buf) {
@@ -681,7 +693,6 @@ enum okb_compiler_kind {
 
 #define OKB_ENVVAR_REBUILD "OKBUILD_REBUILD"
 
-#define OKB_DEFAULT_CONFIG_FILE "config.txt"
 #define OKB_DEFAULT_BUILD_C "build.c"
 
 #if defined(__zig_cc__)
@@ -720,7 +731,6 @@ enum okb_compiler_kind {
 #endif
 
 struct okb_build {
-    char const* config_filename;
     char const* build_c_filename;
     char const* build_out_filename;
     char const* compiler;
@@ -729,11 +739,13 @@ struct okb_build {
     bool force_rebuild;
     bool target_is_win_exe;
     struct okb_cslist script_deps;
+    int argc;
+    char** argv;
 };
 
-OKBAPI struct okb_build okb_build_init(void) {
-    return (struct okb_build){
-        .config_filename = OKB_DEFAULT_CONFIG_FILE,
+OKBAPI struct okb_build* okb_build_init(int argc, char* argv[]) {
+    struct okb_build* build = okb_alloc(1, sizeof(struct okb_build));
+    *build = (struct okb_build){
         .build_c_filename = OKB_DEFAULT_BUILD_C,
         .build_out_filename = OKB_DEFAULT_OUT_FILENAME,
         .compiler = OKB_DEFAULT_COMPILER,
@@ -742,7 +754,10 @@ OKBAPI struct okb_build okb_build_init(void) {
         .force_rebuild = false,
         .target_is_win_exe = OKB_DEFAULT_IS_WIN_EXE,
         .script_deps = okb_cslist_init(),
+        .argc = argc,
+        .argv = argv,
     };
+    return build;
 }
 
 OKBAPI void okb_build_deinit(struct okb_build* build) { okb_cslist_deinit(&build->script_deps); }
@@ -867,7 +882,7 @@ error:
     return err;
 }
 
-OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build, int argc, char* argv[]) {
+OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
     enum okb_err err = OKB_OK;
 
     // Check if we are in a child process
@@ -877,7 +892,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build, int argc, char* 
         // If already rebuilt, then return
         if (rebuild_state && strcmp(rebuild_state, "1") == 0) goto done;
 
-        char const* this_filename = okb_fs_basename((char*)argv[0]);
+        char const* this_filename = okb_fs_basename((char*)build->argv[0]);
 
 #ifdef _WIN32
         // Windows cleanup
@@ -976,7 +991,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build, int argc, char* 
         okb_cstring_extend_cstr(&cmd, tmp_build_filename);
 
         // Add CLI arguments
-        okb_cstring_extend_cli_args(&cmd, argc, argv);
+        okb_cstring_extend_cli_args(&cmd, build->argc, build->argv);
 
         if (okb_trace_err(err = okb_run(okb_cstring_as_cstr(cmd)))) goto rebuild_error;
 
@@ -1065,9 +1080,9 @@ done:
     return err;
 }
 
-OKBAPI bool okb_subcmd(char const* const cmd, int argc, char* argv[]) {
-    if (argc < 2) return false;
-    return strcmp(cmd, argv[1]) == 0;
+OKBAPI bool okb_subcmd(struct okb_build* build, char const* cmd) {
+    if (build->argc < 2) return false;
+    return strcmp(cmd, build->argv[1]) == 0;
 }
 
 #endif  // OKBUILD_H_
