@@ -1,14 +1,3 @@
-/**
- * @file example.c
- * @author your name (you@domain.com)
- * @brief Example program built with okbuild
- * @version 0.1
- * @date 2023-11-04
- *
- * @copyright Copyright (c) 2023
- *
- */
-
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {

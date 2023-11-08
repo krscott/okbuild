@@ -1,14 +1,3 @@
-/**
- * @file build.c
- * @author your name (you@domain.com)
- * @brief Project build script
- * @version 0.1
- * @date 2023-11-04
- *
- * @copyright Copyright (c) 2023
- *
- */
-
 #include "okbuild.h"
 
 #define APP_SRC "src_example/example"
