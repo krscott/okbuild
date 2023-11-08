@@ -1008,6 +1008,7 @@ OKBAPI enum okb_err okb_run(char const* cmd) {
 struct okb_build {
     struct okb_cstring build_c_filename;
     struct okb_cstring build_out_filename;
+    struct okb_cstring bin_dir;
     struct okb_cstring obj_dir;
     struct okb_cstring cc;
     struct okb_cstring cflags;
@@ -1025,6 +1026,7 @@ struct okb_build {
 struct okb_settings {
     char const* build_c_filename;
     char const* build_out_filename;
+    char const* bin_dir;
     char const* obj_dir;
     char const* cc;
     char const* cflags;
@@ -1110,6 +1112,7 @@ static struct okb_settings const okb_settings_msvc = {
 #define OKB_DEFAULT_IS_WIN_EXE false
 #endif
 
+#define OKB_DEFAULT_BIN_DIR "_bin"
 #define OKB_DEFAULT_OBJ_DIR "_build"
 
 OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, char* argv[]) {
@@ -1119,6 +1122,7 @@ OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, 
     *build = (struct okb_build){
         .build_c_filename = okb_cstring_init_with_cstr(build_c_filename),
         .build_out_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_OUT_FILENAME),
+        .bin_dir = okb_cstring_init_with_cstr(OKB_DEFAULT_BIN_DIR),
         .obj_dir = okb_cstring_init_with_cstr(OKB_DEFAULT_OBJ_DIR),
         .cc = okb_cstring_init(),
         .cflags = okb_cstring_init(),
@@ -1140,6 +1144,16 @@ OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, 
 
 OKBAPI void okb_build_deinit(struct okb_build* build) {
     assert(build);
+    okb_cstring_deinit(&build->build_c_filename);
+    okb_cstring_deinit(&build->build_out_filename);
+    okb_cstring_deinit(&build->bin_dir);
+    okb_cstring_deinit(&build->obj_dir);
+    okb_cstring_deinit(&build->cc);
+    okb_cstring_deinit(&build->cflags);
+    okb_cstring_deinit(&build->lflags);
+    okb_cstring_deinit(&build->compile_in_flag);
+    okb_cstring_deinit(&build->compile_out_flag);
+    okb_cstring_deinit(&build->link_out_flag);
     okb_cslist_deinit(&build->script_deps);
 }
 
@@ -1248,10 +1262,9 @@ OKBAPI enum okb_err okb_build_compile(
     assert(output_filename);
     assert(input_filename);
     enum okb_err err = OKB_OK;
-
-    if ((err = okb_fs_mkdir_p(okb_fs_dirname(output_filename)))) goto error1;
-
     struct okb_cstring cmd = okb_cstring_init();
+
+    if ((err = okb_fs_mkdir_p(okb_fs_dirname(output_filename)))) goto error;
 
     okb_cstring_extend(&cmd, build->cc);
 
@@ -1273,11 +1286,10 @@ OKBAPI enum okb_err okb_build_compile(
     okb_cstring_extend_cstr(&cmd, output_filename);
 
     okb_info("Compiling: %s", okb_cstring_as_cstr(cmd));
-    if (okb_trace_err(err = okb_run(okb_cstring_as_cstr(cmd)))) goto error2;
+    if (okb_trace_err(err = okb_run(okb_cstring_as_cstr(cmd)))) goto error;
 
-error2:
+error:
     okb_cstring_deinit(&cmd);
-error1:
     return err;
 }
 
@@ -1472,8 +1484,21 @@ OKBAPI enum okb_err okb_link_rule(
 ) {
     assert(build);
     assert(binary_name);
+
+    enum okb_err err = OKB_OK;
+
+    if (build->bin_dir.len > 0) {
+        // Create bin_dir if it doesn't exist
+        if ((err = okb_fs_mkdir_p(okb_cstring_as_cstr(build->bin_dir)))) goto done;
+    }
+
     okb_cstring_clear(binary_path);
-    okb_cstring_extend_cstr(binary_path, binary_name);
+
+    // Set binary path: [<bin_dir>/]<binary_basename>
+    okb_cstring_extend(binary_path, build->bin_dir);
+    if (binary_path->len > 0) okb_cstring_push(binary_path, '/');
+    okb_cstring_extend_cstr(binary_path, okb_fs_basename(binary_name));
+
     if (build->target_is_win_exe) {
         okb_cstring_replace_ext(binary_path, "exe");
     }
@@ -1483,8 +1508,6 @@ OKBAPI enum okb_err okb_link_rule(
 #endif
 
     okb_debug("%s", okb_cstring_as_cstr(*binary_path));
-
-    enum okb_err err = OKB_OK;
 
     if (!build->force_rebuild) {
         struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(

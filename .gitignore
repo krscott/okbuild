@@ -1,6 +1,7 @@
 .vscode
 *.exe
 _build
+_bin
 .krs_tmp_build*
 *.obj
 *.o
