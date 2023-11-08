@@ -2,6 +2,7 @@
 #define OKBUILD_H_
 
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <io.h>
 #include <stdbool.h>
@@ -331,6 +332,13 @@ OKBAPI void okb_cstring_extend_cli_args(struct okb_cstring* cs, int argc, char**
     }
 }
 
+OKBAPI void okb_cstring_make_win_path(struct okb_cstring* cs) {
+    assert(cs);
+    for (ptrdiff_t i = 0; i < cs->len; ++i) {
+        if (cs->buf[i] == '/') cs->buf[i] = '\\';
+    }
+}
+
 // String list
 
 // List of cstrings
@@ -536,18 +544,42 @@ OKBAPI enum okb_err okb_fs_remove(char const* filename) {
     return OKB_OK;
 }
 
+OKBAPI enum okb_err okb_fs_remove_if_exists(char const* filename) {
+    assert(filename);
+    if (okb_fs_exists(filename)) return okb_fs_remove(filename);
+    return OKB_OK;
+}
+
 OKBAPI enum okb_err okb_fs_rmdir(char const* dirname) {
     assert(dirname);
+
+    DIR* dir = opendir(dirname);
+    if (!dir) {
+        okb_error("`opendir(\"%s\")`: %s (errno=%d)", dirname, strerror(errno), errno);
+        return OKB_ERRNO;
+    }
+
+    // Delete all files in dirname
+    struct okb_cstring path = okb_cstring_init();
+    struct dirent* dirent;
+    while ((dirent = readdir(dir))) {
+        char* fname = dirent->d_name;
+        if (strcmp(fname, ".") != 0 && strcmp(fname, "..") != 0) {
+            okb_cstring_clear(&path);
+            okb_cstring_extend_cstr(&path, dirname);
+            okb_cstring_push(&path, '/');
+            okb_cstring_extend_cstr(&path, fname);
+
+            okb_fs_remove(okb_cstring_as_cstr(path));
+        }
+    }
+    okb_cstring_deinit(&path);
+    closedir(dir);
+
     if (rmdir(dirname)) {
         okb_error("`rmdir(\"%s\")`: %s (errno=%d)", dirname, strerror(errno), errno);
         return OKB_ERRNO;
     }
-    return OKB_OK;
-}
-
-OKBAPI enum okb_err okb_fs_remove_if_exists(char const* filename) {
-    assert(filename);
-    if (okb_fs_exists(filename)) return okb_fs_remove(filename);
     return OKB_OK;
 }
 
@@ -1433,31 +1465,38 @@ done:
 }
 
 OKBAPI enum okb_err okb_link_rule(
+    struct okb_cstring* binary_path,
     struct okb_build const* build,
     char const* binary_name,
     struct okb_cslist object_filenames
 ) {
     assert(build);
     assert(binary_name);
-    struct okb_cstring binary_filename = okb_cstring_init_with_cstr(binary_name);
+    okb_cstring_clear(binary_path);
+    okb_cstring_extend_cstr(binary_path, binary_name);
     if (build->target_is_win_exe) {
-        okb_cstring_replace_ext(&binary_filename, "exe");
+        okb_cstring_replace_ext(binary_path, "exe");
     }
+
+#ifdef _WIN32
+    okb_cstring_make_win_path(binary_path);
+#endif
+
+    okb_debug("%s", okb_cstring_as_cstr(*binary_path));
 
     enum okb_err err = OKB_OK;
 
     if (!build->force_rebuild) {
         struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(
-            okb_cstring_as_cstr(binary_filename), object_filenames
+            okb_cstring_as_cstr(*binary_path), object_filenames
         );
         err = res.err;
         if (err || !res.is_old) goto done;
     }
 
-    err = okb_build_link(build, okb_cstring_as_cstr(binary_filename), object_filenames);
+    err = okb_build_link(build, okb_cstring_as_cstr(*binary_path), object_filenames);
 
 done:
-    okb_cstring_deinit(&binary_filename);
     return err;
 }
 
