@@ -24,6 +24,7 @@ static void clean(void) {
 static void run(char const* exe_filename, int argc, char* argv[]) {
     struct okb_cstring cmd = okb_cstring_init_with_cstr(exe_filename);
     okb_cstring_extend_cli_args(&cmd, argc, argv);
+    okb_info("Running: %s", okb_cstring_as_cstr(cmd));
     (void)okb_run(okb_cstring_as_cstr(cmd));
     okb_cstring_deinit(&cmd);
 }
@@ -55,7 +56,8 @@ int main(int argc, char* argv[]) {
     // Link project
     okb_assert_ok(okb_link_rule(build, APP_NAME, example_object_files));
 
-    // Run project
+    // Run project with arguments
+    // e.g. `./build run foo bar`
     if (okb_subcmd(build, "run")) {
         run(APP_NAME, argc - 1, &argv[1]);
         goto done;

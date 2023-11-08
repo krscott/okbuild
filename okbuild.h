@@ -115,7 +115,7 @@ OKBAPI void okb_assert_ok_(enum okb_err err, char const* file, int line) {
 // Util functions
 
 OKBAPI size_t okb_checked_mul(size_t a, size_t b) {
-    size_t result = (size_t)(a) * (size_t)(b);
+    size_t result = a * b;
     if (a > 1 && result / a != b) okb_panic("multiply overflow");
     return result;
 }
@@ -124,15 +124,6 @@ OKBAPI ptrdiff_t okb_next_power_of_2(ptrdiff_t n) {
     ptrdiff_t k = 1;
     while (k < n) k *= 2;
     return k;
-}
-
-OKBAPI bool okb_cstr_contains_char(char const* s, char c) {
-    assert(s);
-    while (*s) {
-        if (*s == c) return true;
-        ++s;
-    }
-    return false;
 }
 
 OKBAPI bool okb_cstr_ends_with(char const* s, char const* end) {
@@ -233,6 +224,11 @@ OKBAPI void okb_cstring_reserve(struct okb_cstring* cs, ptrdiff_t additional) {
     OKB_DA_RESERVE(okb_cstring, cs, additional + 1);  // +1 for null terminator
 }
 
+OKBAPI void okb_cstring_push(struct okb_cstring* cs, char c) {
+    OKB_DA_PUSH(okb_cstring, cs, c);
+    cs->buf[cs->len] = '\0';
+}
+
 OKBAPI void okb_cstring_extend_chars(struct okb_cstring* cs, ptrdiff_t n, char const* chars) {
     if (n > 0) {
         assert(chars);
@@ -248,6 +244,23 @@ OKBAPI void okb_cstring_extend_cstr(struct okb_cstring* cs, char const* cstr) {
     okb_cstring_extend_chars(cs, strlen(cstr), cstr);
 }
 
+OKBAPI void okb_cstring_extend_cstr_escaped(struct okb_cstring* cs, char const* cstr) {
+    assert(cs);
+    assert(cstr);
+    for (; *cstr; ++cstr) {
+        switch (*cstr) {
+            case '"':
+                okb_cstring_extend_cstr(cs, "\\\"");
+                break;
+            case '\\':
+                okb_cstring_extend_cstr(cs, "\\\\");
+                break;
+            default:
+                okb_cstring_push(cs, *cstr);
+        }
+    }
+}
+
 OKBAPI void okb_cstring_extend(struct okb_cstring* cs, struct okb_cstring other) {
     okb_cstring_extend_chars(cs, other.len, other.buf);
 }
@@ -257,12 +270,7 @@ OKBAPI void okb_cstring_set_cstr(struct okb_cstring* cs, char const* cstr) {
     okb_cstring_extend_cstr(cs, cstr);
 }
 
-OKBAPI void okb_cstring_push(struct okb_cstring* cs, char c) {
-    OKB_DA_PUSH(okb_cstring, cs, c);
-    cs->buf[cs->len] = '\0';
-}
-
-OKBAPI char const* okb_cstring_as_cstr(struct okb_cstring cs) { return cs.buf; }
+OKBAPI char const* okb_cstring_as_cstr(struct okb_cstring cs) { return cs.len == 0 ? "" : cs.buf; }
 
 OKBAPI struct okb_cstring okb_cstring_init_with_cstr(char const* cstr) {
     assert(cstr);
@@ -284,13 +292,16 @@ OKBAPI struct okb_cstring okb_cstring_clone(struct okb_cstring cs) {
 
 OKBAPI void okb_cstring_strip_file_ext(struct okb_cstring* cs) {
     assert(cs);
-    ptrdiff_t len = cs->len;
 
-    // Find len of string up to extension
-    for (; len > 0; len--) {
-        char c = cs->buf[len - 1];
-        if (c == '\\' || c == '/') break;
-        if (c == '.') {
+    // Find len of string up to extension '.'
+    // Do not strip if '.' is first char of basename (e.g. ".foo", "foo/.bar")
+    // Pathological cases are not supported (e.g. "..foo")
+    for (ptrdiff_t len = cs->len; len >= 2; len--) {
+        char c2 = cs->buf[len - 2];
+        char c1 = cs->buf[len - 1];
+        if (c2 == '\\' || c2 == '/') break;
+        if (c1 == '.') {
+            if (c2 == '.') break;
             cs->len = len - 1;
             cs->buf[cs->len] = '\0';
             break;
@@ -311,9 +322,12 @@ OKBAPI void okb_cstring_extend_cli_args(struct okb_cstring* cs, int argc, char**
     assert(argc >= 1);
     assert(argv);
     for (int i = 1; i < argc; ++i) {
-        okb_cstring_extend_cstr(cs, " \"");
-        okb_cstring_extend_cstr(cs, argv[i]);
-        okb_cstring_push(cs, '"');
+        bool const use_quotes = !!strchr(argv[i], ' ') || !!strchr(argv[i], '"');
+
+        okb_cstring_push(cs, ' ');
+        if (use_quotes) okb_cstring_push(cs, '"');
+        okb_cstring_extend_cstr_escaped(cs, argv[i]);
+        if (use_quotes) okb_cstring_push(cs, '"');
     }
 }
 
@@ -394,7 +408,7 @@ okb_cslist_extend_split_cstr(struct okb_cslist* list, char const* cstr, char con
     okb_cslist_push(list, okb_cstring_init());
 
     for (; *cstr != 0; ++cstr) {
-        if (okb_cstr_contains_char(delims, *cstr)) {
+        if (strchr(delims, *cstr)) {
             okb_cslist_push(list, okb_cstring_init());
         } else {
             okb_cstring_push(&list->buf[list->len - 1], *cstr);
