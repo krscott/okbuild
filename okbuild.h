@@ -2,7 +2,6 @@
 #define OKBUILD_H_
 
 #include <assert.h>
-#include <dirent.h>
 #include <errno.h>
 #include <io.h>
 #include <stdbool.h>
@@ -13,6 +12,7 @@
 #include <sys/stat.h>
 
 #ifndef _MSC_BUILD
+#include <dirent.h>
 #include <libgen.h>
 #endif  // _MSC_BUILD
 
@@ -559,6 +559,9 @@ OKBAPI enum okb_err okb_fs_rmdir(char const* dirname) {
         return OKB_ERRNO;
     }
 
+#ifdef _MSC_BUILD
+#error "TODO"
+#else
     // Delete all files in dirname
     struct okb_cstring path = okb_cstring_init();
     struct dirent* dirent;
@@ -574,6 +577,8 @@ OKBAPI enum okb_err okb_fs_rmdir(char const* dirname) {
         }
     }
     okb_cstring_deinit(&path);
+#endif
+
     closedir(dir);
 
     if (rmdir(dirname)) {
