@@ -17,6 +17,7 @@ static void clean(void) {
     okb_info("Cleaning build files");
 
     okb_assert_ok(okb_fs_delete_glob("_build/*"));
+    okb_assert_ok(okb_fs_delete_glob("*.obj"));
     okb_assert_ok(okb_fs_delete_glob("*.pdb"));
 }
 
