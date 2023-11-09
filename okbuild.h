@@ -860,7 +860,6 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
     do {
         // Find next name
         if (glob->node->handle == -1) {
-            // okb_debug(" START %s", okb_cstring_as_cstr(glob->node->pattern_dir));
             glob->node->handle =
                 _findfirst(okb_cstring_as_cstr(glob->node->pattern_dir), &glob->node->data);
             if (glob->node->handle == -1) {
@@ -885,8 +884,6 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
                 name = glob->node->data.name;
             }
         }
-
-        // okb_debug(" >>> %s", name);
 
         if (name == NULL) {
             // No more names in this dir
@@ -938,7 +935,6 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
 
 OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern) {
     assert(pattern);
-    // okb_debug("Pattern: %s", pattern);
     struct okb_glob glob = okb_glob_init(pattern);
     for (char const* name; (name = okb_glob_next(&glob));) {
         okb_info("Deleting '%s'", name);
@@ -1503,8 +1499,6 @@ OKBAPI enum okb_err okb_link_rule(
 ) {
     assert(build);
     assert(binary_name);
-
-    okb_debug("%d %s %s", __LINE__, binary_name, okb_fs_basename(binary_name));
 
     enum okb_err err = OKB_OK;
 
