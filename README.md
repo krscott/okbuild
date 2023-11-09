@@ -6,7 +6,7 @@ Header-only C library for bootstrapping a project build from only a compiler.
 
 Create a `build.c` file for your build script and include `okbuild.h`.
 
-See [`build.c`](build.c) for an example build script.
+See [`build_example.c`](build_example.c) for an example build script.
 
 
 ### Example: Bootstrapping with gcc
