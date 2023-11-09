@@ -12,7 +12,6 @@
 #include <sys/stat.h>
 
 #ifndef _MSC_BUILD
-#include <dirent.h>
 #include <libgen.h>
 #endif  // _MSC_BUILD
 
@@ -428,19 +427,19 @@ okb_cslist_extend_split_cstr(struct okb_cslist* list, char const* cstr, char con
 
 OKBAPI char const* okb_fs_basename(char const* path) {
     assert(path);
+
+#ifdef _MSC_BUILD
+    ptrdiff_t start = strlen(path);
+    for (; start > 0; --start) {
+        if (path[start - 1] == '\'' || path[start - 1] == '/') break;
+    }
+    return &path[start];
+#else
+
     static char scratch[260];
     assert(strlen(path) < okb_countof(scratch));
     strncpy(scratch, path, okb_countof(scratch) - 1);
 
-#ifdef _MSC_BUILD
-    _splitpath_s(path, NULL, 0, NULL, 0, scratch, okb_countof(scratch), NULL, 0);
-    char const* out = strstr(path, scratch);
-    if (!out) {
-        okb_warn("Could not find basename of %s", path);
-        return path;
-    }
-    return out;
-#else
     // libgen.h
     return basename(scratch);
 #endif
@@ -453,13 +452,15 @@ OKBAPI char const* okb_fs_dirname(char const* path) {
     strncpy(scratch, path, okb_countof(scratch) - 1);
 
 #ifdef _MSC_BUILD
-    _splitpath_s(path, NULL, 0, scratch, okb_countof(scratch), NULL, 0, NULL, 0);
-    char const* out = strstr(path, scratch);
-    if (!out) {
-        okb_warn("Could not find dirname of %s", path);
-        return path;
+    // Start at strlen-2 because if last char is '/', ignore it anyway
+    ptrdiff_t len = strlen(path) - 2;
+    if (len <= 0) return "";
+
+    for (; len > 0; --len) {
+        if (scratch[len] == '\'' || scratch[len] == '/') break;
     }
-    return out;
+    scratch[len] = '\0';
+    return scratch;
 #else
     // libgen.h
     return dirname(scratch);
@@ -486,6 +487,8 @@ OKBAPI enum okb_err okb_fs_mkdir(char const* path) {
     int mkdir_err;
     errno = 0;
 
+    okb_debug("okb_fs_mkdir(\"%s\")", path);
+
 #ifdef _WIN32
     mkdir_err = mkdir(path);
 #else
@@ -502,9 +505,14 @@ OKBAPI enum okb_err okb_fs_mkdir(char const* path) {
 OKBAPI bool okb_fs_exists(char const* filename) { return !okb_fs_stat(filename).err; }
 
 OKBAPI bool okb_fs_isdir(char const* path) {
+#ifdef _MSC_BUILD
+    DWORD dw_attrib = GetFileAttributesA(path);
+    return (dw_attrib != INVALID_FILE_ATTRIBUTES && (dw_attrib & FILE_ATTRIBUTE_DIRECTORY));
+#else
     struct okb_fs_stat_res res = okb_fs_stat(path);
     if (res.err) return false;
     return S_ISDIR(res.stat.st_mode);
+#endif
 }
 
 OKBAPI enum okb_err okb_fs_mkdir_p(char const* path) {
@@ -550,37 +558,25 @@ OKBAPI enum okb_err okb_fs_remove_if_exists(char const* filename) {
     return OKB_OK;
 }
 
+OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern);
+
 OKBAPI enum okb_err okb_fs_rmdir(char const* dirname) {
-    assert(dirname);
+    if (!dirname || dirname[0] == '\0') okb_panic("okb_fs_rmdir: dirname empty or null");
 
-    DIR* dir = opendir(dirname);
-    if (!dir) {
-        okb_error("`opendir(\"%s\")`: %s (errno=%d)", dirname, strerror(errno), errno);
-        return OKB_ERRNO;
+    if (!okb_fs_isdir(dirname)) {
+        okb_error("`okb_fs_rmdir(\"%s\")`: is not a directory", dirname);
+        return OKB_FILE_DOES_NOT_EXIST;
     }
 
-#ifdef _MSC_BUILD
-#error "TODO"
-#else
-    // Delete all files in dirname
-    struct okb_cstring path = okb_cstring_init();
-    struct dirent* dirent;
-    while ((dirent = readdir(dir))) {
-        char* fname = dirent->d_name;
-        if (strcmp(fname, ".") != 0 && strcmp(fname, "..") != 0) {
-            okb_cstring_clear(&path);
-            okb_cstring_extend_cstr(&path, dirname);
-            okb_cstring_push(&path, '/');
-            okb_cstring_extend_cstr(&path, fname);
+    // Recursively delete child files and directories
+    struct okb_cstring glob_path = okb_cstring_init();
+    okb_cstring_extend_cstr(&glob_path, dirname);
+    assert(glob_path.len > 0);
+    okb_cstring_extend_cstr(&glob_path, "/*");
+    okb_fs_delete_glob(okb_cstring_as_cstr(glob_path));
+    okb_cstring_deinit(&glob_path);
 
-            okb_fs_remove(okb_cstring_as_cstr(path));
-        }
-    }
-    okb_cstring_deinit(&path);
-#endif
-
-    closedir(dir);
-
+    // Delete now-empty directory
     if (rmdir(dirname)) {
         okb_error("`rmdir(\"%s\")`: %s (errno=%d)", dirname, strerror(errno), errno);
         return OKB_ERRNO;
@@ -1021,6 +1017,7 @@ struct okb_build {
     struct okb_cstring compile_in_flag;
     struct okb_cstring compile_out_flag;
     struct okb_cstring link_out_flag;
+    struct okb_cstring single_out_flag;
     bool force_rebuild;
     bool target_is_win_exe;
     struct okb_cslist script_deps;
@@ -1039,6 +1036,9 @@ struct okb_settings {
     char const* compile_in_flag;
     char const* compile_out_flag;
     char const* link_out_flag;
+
+    // Flag used if compiling single .c -> binary (for MSVC /Fe vs /link /out:)
+    char const* single_out_flag;
 };
 
 OKBAPI void okb_build_set(struct okb_build* build, struct okb_settings settings) {
@@ -1054,6 +1054,7 @@ OKBAPI void okb_build_set(struct okb_build* build, struct okb_settings settings)
     OKB_SET_(compile_in_flag);
     OKB_SET_(compile_out_flag);
     OKB_SET_(link_out_flag);
+    OKB_SET_(single_out_flag);
 
 #undef OKB_SET_
 }
@@ -1065,6 +1066,7 @@ static struct okb_settings const okb_settings_zig_cc = {
     .compile_in_flag = "-c",
     .compile_out_flag = "-o",
     .link_out_flag = "-o",
+    .single_out_flag = "-o",
 };
 
 static struct okb_settings const okb_settings_clang = {
@@ -1074,6 +1076,7 @@ static struct okb_settings const okb_settings_clang = {
     .compile_in_flag = "-c",
     .compile_out_flag = "-o",
     .link_out_flag = "-o",
+    .single_out_flag = "-o",
 };
 
 static struct okb_settings const okb_settings_gcc = {
@@ -1083,6 +1086,7 @@ static struct okb_settings const okb_settings_gcc = {
     .compile_in_flag = "-c",
     .compile_out_flag = "-o",
     .link_out_flag = "-o",
+    .single_out_flag = "-o",
 };
 
 static struct okb_settings const okb_settings_msvc = {
@@ -1092,6 +1096,7 @@ static struct okb_settings const okb_settings_msvc = {
     .compile_in_flag = "",
     .compile_out_flag = "/Fo",
     .link_out_flag = "/link /out:",
+    .single_out_flag = "/Fe",
 };
 
 #define OKB_ENVVAR_REBUILD "OKBUILD_REBUILD"
@@ -1135,6 +1140,7 @@ OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, 
         .compile_in_flag = okb_cstring_init(),
         .compile_out_flag = okb_cstring_init(),
         .link_out_flag = okb_cstring_init(),
+        .single_out_flag = okb_cstring_init(),
         .force_rebuild = false,
         .target_is_win_exe = OKB_DEFAULT_IS_WIN_EXE,
         .script_deps = okb_cslist_init(),
@@ -1159,6 +1165,7 @@ OKBAPI void okb_build_deinit(struct okb_build* build) {
     okb_cstring_deinit(&build->compile_in_flag);
     okb_cstring_deinit(&build->compile_out_flag);
     okb_cstring_deinit(&build->link_out_flag);
+    okb_cstring_deinit(&build->single_out_flag);
     okb_cslist_deinit(&build->script_deps);
 }
 
@@ -1218,6 +1225,9 @@ OKBAPI enum okb_err okb_build_link(
     struct okb_cstring cmd = okb_cstring_init_with_cstr(okb_cstring_as_cstr(build->cc));
     struct okb_cstring output_filename_owned = okb_cstring_init_with_cstr(output_filename);
 
+    bool is_single_c_input = input_filenames.len == 1 &&
+                             okb_cstr_ends_with(okb_cslist_get_cstr(input_filenames, 0), ".c");
+
     for (ptrdiff_t i = 0; i < input_filenames.len; ++i) {
         okb_cstring_push(&cmd, ' ');
         okb_cstring_extend_cstr(&cmd, okb_cslist_get_cstr(input_filenames, i));
@@ -1235,7 +1245,11 @@ OKBAPI enum okb_err okb_build_link(
     }
 
     okb_cstring_push(&cmd, ' ');
-    okb_cstring_extend(&cmd, build->link_out_flag);  // e.g. "-o" or "/link /out:"
+    if (is_single_c_input) {
+        okb_cstring_extend(&cmd, build->single_out_flag);  // e.g. "-o" or "/Fe"
+    } else {
+        okb_cstring_extend(&cmd, build->link_out_flag);  // e.g. "-o" or "/link /out:"
+    }
     okb_cstring_extend_cstr(&cmd, output_filename);
 
     // Remove stale .pdb file
@@ -1490,6 +1504,8 @@ OKBAPI enum okb_err okb_link_rule(
     assert(build);
     assert(binary_name);
 
+    okb_debug("%d %s %s", __LINE__, binary_name, okb_fs_basename(binary_name));
+
     enum okb_err err = OKB_OK;
 
     if (build->bin_dir.len > 0) {
@@ -1511,8 +1527,6 @@ OKBAPI enum okb_err okb_link_rule(
 #ifdef _WIN32
     okb_cstring_make_win_path(binary_path);
 #endif
-
-    okb_debug("%s", okb_cstring_as_cstr(*binary_path));
 
     if (!build->force_rebuild) {
         struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(
