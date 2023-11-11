@@ -3,7 +3,7 @@ name: build-platforms
 run-name: ${{ github.actor }} is building all platforms
 on: [push]
 jobs:
-  build-windows-mingw:
+  build-mingw-gcc:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,4 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: gcc -o build build_example.c -Wall -Wextra -pedantic -Werror -fsanitize=address
+      - run: ./build rebuild
+  build-ubuntu-clang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: clang -o build build_example.c -Wall -Wextra -pedantic -Werror -fsanitize=address
       - run: ./build rebuild
