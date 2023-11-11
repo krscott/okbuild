@@ -3,12 +3,6 @@ name: test-build
 run-name: ${{ github.actor }} is building all platforms
 on: [push]
 jobs:
-  build-mingw-gcc:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: gcc -o build.exe build_example.c -Wall -Wextra -pedantic -Werror
-      - run: .\build.exe rebuild
   build-ubuntu-gcc:
     runs-on: ubuntu-latest
     steps:
@@ -23,3 +17,16 @@ jobs:
       - run: clang -o build build_example.c -Wall -Wextra -pedantic -Werror -fsanitize=address
       - run: touch build_example.c
       - run: ./build
+  build-mingw-gcc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gcc -o build.exe build_example.c -Wall -Wextra -pedantic -Werror
+      - run: .\build.exe rebuild
+  build-windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: cl build_example.c /Fe:build.exe
+      - run: .\build.exe rebuild

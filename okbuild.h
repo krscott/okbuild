@@ -12,7 +12,9 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#ifndef _MSC_BUILD
+#ifdef _MSC_BUILD
+#include <io.h>
+#else
 #include <libgen.h>
 #endif  // _MSC_BUILD
 
