@@ -1,0 +1,17 @@
+---
+name: build-platforms
+run-name: ${{ github.actor }} is building all platforms
+on: [push]
+jobs:
+  build-windows-mingw:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gcc -o build.exe build_example.c -Wall -Wextra -pedantic -Werror
+      - run: .\build.exe rebuild
+  build-ubuntu-gcc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gcc -o build build_example.c -Wall -Wextra -pedantic -Werror
+      - run: ./build rebuild

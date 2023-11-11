@@ -3,8 +3,9 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <io.h>
+#include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #else
 #include <fcntl.h>
 #include <glob.h>
+#include <unistd.h>
 #endif
 
 // Util macros
@@ -487,8 +489,6 @@ OKBAPI enum okb_err okb_fs_mkdir(char const* path) {
     int mkdir_err;
     errno = 0;
 
-    okb_debug("okb_fs_mkdir(\"%s\")", path);
-
 #ifdef _WIN32
     mkdir_err = mkdir(path);
 #else
@@ -678,7 +678,7 @@ OKBAPI enum okb_err okb_fs_copy(char const* src, char const* dest) {
         goto error;
     }
 
-error:
+error:;
     int save_errno = errno;
     if (fd_src >= 0) close(fd_src);
     if (fd_dest >= 0) close(fd_dest);
@@ -686,8 +686,8 @@ error:
 
     return err;
 #else
-// todo Use clonefile for MacOS
-#warning "Using fallback version of 'okb_fs_copy'"
+    // todo Use clonefile for MacOS
+    okb_warn("Using fallback version of 'okb_fs_copy'");
 
     struct okb_fs_fopen_res res;
     FILE* f_in = NULL;
@@ -708,7 +708,7 @@ error:
         }
     }
 
-error:
+error:;
     int save_errno = errno;
     if (f_in) okb_fs_close(f_in);
     if (f_out) okb_fs_close(f_out);
@@ -721,9 +721,9 @@ error:
 // Glob
 
 #ifdef _WIN32
-struct okb_glob_node_ {
+struct okb_globiter_node_ {
     int error;
-    struct okb_glob_node_* parent;
+    struct okb_globiter_node_* parent;
     char const* pattern_tail;
     struct okb_cstring pattern_dir;
     intptr_t handle;
@@ -731,19 +731,20 @@ struct okb_glob_node_ {
     bool is_last;
 };
 
-OKBAPI void okb_glob_node_get_fullpath_(struct okb_cstring* path, struct okb_glob_node_* node) {
+OKBAPI void
+okb_globiter_node_get_fullpath_(struct okb_cstring* path, struct okb_globiter_node_* node) {
     assert(path);
     assert(node);
     okb_cstring_clear(path);
     if (node->parent) {
-        okb_glob_node_get_fullpath_(path, node->parent);
+        okb_globiter_node_get_fullpath_(path, node->parent);
         okb_cstring_push(path, '/');
     }
     okb_cstring_extend_cstr(path, node->data.name);
 }
 
-OKBAPI struct okb_glob_node_*
-okb_glob_node_init_(struct okb_glob_node_* parent, char const* pattern) {
+OKBAPI struct okb_globiter_node_*
+okb_globiter_node_init_(struct okb_globiter_node_* parent, char const* pattern) {
     assert(pattern);
     char const* p = pattern;
 
@@ -751,7 +752,7 @@ okb_glob_node_init_(struct okb_glob_node_* parent, char const* pattern) {
 
     // Start with parent path
     if (parent) {
-        okb_glob_node_get_fullpath_(&pattern_dir, parent);
+        okb_globiter_node_get_fullpath_(&pattern_dir, parent);
         okb_cstring_push(&pattern_dir, '/');
     }
 
@@ -764,9 +765,9 @@ okb_glob_node_init_(struct okb_glob_node_* parent, char const* pattern) {
         okb_cstring_push(&pattern_dir, *p);
     }
 
-    struct okb_glob_node_* node = okb_alloc(1, sizeof(struct okb_glob_node_));
+    struct okb_globiter_node_* node = okb_alloc(1, sizeof(struct okb_globiter_node_));
 
-    *node = (struct okb_glob_node_){
+    *node = (struct okb_globiter_node_){
         .parent = parent,
         .pattern_tail = p,
         .pattern_dir = pattern_dir,
@@ -777,10 +778,10 @@ okb_glob_node_init_(struct okb_glob_node_* parent, char const* pattern) {
     return node;
 }
 
-OKBAPI enum okb_err okb_glob_node_deinit_(struct okb_glob_node_* node, bool recursive) {
+OKBAPI enum okb_err okb_globiter_node_deinit_(struct okb_globiter_node_* node, bool recursive) {
     enum okb_err err = OKB_OK;
 
-    if (recursive && node->parent) err = okb_glob_node_deinit_(node->parent, true);
+    if (recursive && node->parent) err = okb_globiter_node_deinit_(node->parent, true);
     if (node->handle != -1) _findclose(node->handle);
 
     node->handle = -1;
@@ -798,11 +799,11 @@ OKBAPI enum okb_err okb_glob_node_deinit_(struct okb_glob_node_* node, bool recu
 }
 #endif
 
-struct okb_glob {
+struct okb_globiter {
     int error;
     char const* pattern;
 #ifdef _WIN32
-    struct okb_glob_node_* node;
+    struct okb_globiter_node_* node;
     struct okb_cstring path;
 #else
     ptrdiff_t i;
@@ -810,13 +811,13 @@ struct okb_glob {
 #endif
 };
 
-OKBAPI struct okb_glob okb_glob_init(char const* pattern) {
+OKBAPI struct okb_globiter okb_globiter_init(char const* pattern) {
     assert(pattern);
-    return (struct okb_glob){
+    return (struct okb_globiter){
         .error = 0,
         .pattern = pattern,
 #ifdef _WIN32
-        .node = okb_glob_node_init_(NULL, pattern),
+        .node = okb_globiter_node_init_(NULL, pattern),
         .path = okb_cstring_init(),
 #else
         .i = 0,
@@ -824,18 +825,18 @@ OKBAPI struct okb_glob okb_glob_init(char const* pattern) {
     };
 }
 
-OKBAPI enum okb_err okb_glob_deinit(struct okb_glob* glob) {
-    glob->pattern = NULL;
+OKBAPI enum okb_err okb_globiter_deinit(struct okb_globiter* iter) {
+    iter->pattern = NULL;
 
 #ifdef _WIN32
-    okb_cstring_deinit(&glob->path);
-    return okb_glob_node_deinit_(glob->node, true);
+    okb_cstring_deinit(&iter->path);
+    return okb_globiter_node_deinit_(iter->node, true);
 #else
-    globfree(&glob->buf);
+    globfree(&iter->buf);
 
-    if (glob->error) {
-        okb_error("glob error: %s", strerror(glob->error));
-        errno = glob->error;
+    if (iter->error) {
+        okb_error("glob error: %s", strerror(iter->error));
+        errno = iter->error;
         return OKB_ERRNO;
     }
     return OKB_OK;
@@ -843,13 +844,13 @@ OKBAPI enum okb_err okb_glob_deinit(struct okb_glob* glob) {
 #endif
 }
 
-OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
-    assert(glob);
-    if (glob->error) return NULL;
-    assert(glob->pattern);
+OKBAPI char const* okb_globiter_next(struct okb_globiter* iter) {
+    assert(iter);
+    if (iter->error) return NULL;
+    assert(iter->pattern);
 
 #ifdef _WIN32
-    if (!glob->node) return NULL;
+    if (!iter->node) return NULL;
 
     // Perhaps there is an easier way to do this in Windows.
     // Nothing I found online correctly handled paths with arbitrary wildcards.
@@ -859,29 +860,29 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
 
     do {
         // Find next name
-        if (glob->node->handle == -1) {
-            glob->node->handle =
-                _findfirst(okb_cstring_as_cstr(glob->node->pattern_dir), &glob->node->data);
-            if (glob->node->handle == -1) {
+        if (iter->node->handle == -1) {
+            iter->node->handle =
+                _findfirst(okb_cstring_as_cstr(iter->node->pattern_dir), &iter->node->data);
+            if (iter->node->handle == -1) {
                 if (errno != ENOENT) {
                     // exit iterator on error
-                    glob->node->error = errno;
+                    iter->node->error = errno;
                     return NULL;
                 }
                 name = NULL;
             } else {
-                name = glob->node->data.name;
+                name = iter->node->data.name;
             }
         } else {
-            if (_findnext(glob->node->handle, &glob->node->data) == -1) {
+            if (_findnext(iter->node->handle, &iter->node->data) == -1) {
                 if (errno != ENOENT) {
                     // exit iterator on error
-                    glob->node->error = errno;
+                    iter->node->error = errno;
                     return NULL;
                 }
                 name = NULL;
             } else {
-                name = glob->node->data.name;
+                name = iter->node->data.name;
             }
         }
 
@@ -889,54 +890,52 @@ OKBAPI char const* okb_glob_next(struct okb_glob* glob) {
             // No more names in this dir
 
             // If at root, iterator is done
-            if (!glob->node->parent) return NULL;
+            if (!iter->node->parent) return NULL;
 
             // Go back to parent directory
-            struct okb_glob_node_* deinit_node = glob->node;
-            glob->node = glob->node->parent;
-            okb_glob_node_deinit_(deinit_node, false);
+            struct okb_globiter_node_* deinit_node = iter->node;
+            iter->node = iter->node->parent;
+            okb_globiter_node_deinit_(deinit_node, false);
         } else if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
             // skip
-        } else if (glob->node->data.attrib & _A_SUBDIR && !glob->node->is_last) {
+        } else if (iter->node->data.attrib & _A_SUBDIR && !iter->node->is_last) {
             // Go into directory
-            glob->node = okb_glob_node_init_(glob->node, glob->node->pattern_tail);
-        } else if (glob->node->is_last) {
+            iter->node = okb_globiter_node_init_(iter->node, iter->node->pattern_tail);
+        } else if (iter->node->is_last) {
             // Return matching path
 
-            okb_cstring_clear(&glob->path);
-            assert(glob->node);
-            if (glob->node->parent) {
-                okb_glob_node_get_fullpath_(&glob->path, glob->node->parent);
-                okb_cstring_push(&glob->path, '/');
+            okb_cstring_clear(&iter->path);
+            assert(iter->node);
+            if (iter->node->parent) {
+                okb_globiter_node_get_fullpath_(&iter->path, iter->node->parent);
+                okb_cstring_push(&iter->path, '/');
             }
-            okb_cstring_extend_cstr(&glob->path, name);
+            okb_cstring_extend_cstr(&iter->path, name);
 
-            return okb_cstring_as_cstr(glob->path);
+            return okb_cstring_as_cstr(iter->path);
         }
 
     } while (1);
-
 #else
 
-    assert(glob->i >= 0);
-    if (glob->i == 0) {
-        int err = glob(glob->pattern, 0, NULL, &glob->buf);
+    assert(iter->i >= 0);
+    if (iter->i == 0) {
+        int err = glob(iter->pattern, 0, NULL, &iter->buf);
         if (err != GLOB_NOMATCH) {
-            glob->error = err;
+            iter->error = err;
             return NULL;
         }
     }
 
-    int i = glob->i;
-    glob->i++;
-    return i < glob->buf.gl_pathc ? glob->buf.gl_pathc[i] : NULL;
+    if ((size_t)iter->i >= iter->buf.gl_pathc) return NULL;
+    return iter->buf.gl_pathv[iter->i++];
 #endif
 }
 
 OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern) {
     assert(pattern);
-    struct okb_glob glob = okb_glob_init(pattern);
-    for (char const* name; (name = okb_glob_next(&glob));) {
+    struct okb_globiter iter = okb_globiter_init(pattern);
+    for (char const* name; (name = okb_globiter_next(&iter));) {
         okb_info("Deleting '%s'", name);
         if (okb_fs_isdir(name)) {
             (void)okb_fs_rmdir(name);
@@ -944,17 +943,17 @@ OKBAPI enum okb_err okb_fs_delete_glob(char const* pattern) {
             (void)okb_fs_remove(name);
         }
     }
-    return okb_glob_deinit(&glob);
+    return okb_globiter_deinit(&iter);
 }
 
 OKBAPI enum okb_err okb_cslist_add_glob(struct okb_cslist* list, char const* pattern) {
     assert(list);
     assert(pattern);
-    struct okb_glob glob = okb_glob_init(pattern);
-    for (char const* fname; (fname = okb_glob_next(&glob));) {
+    struct okb_globiter iter = okb_globiter_init(pattern);
+    for (char const* fname; (fname = okb_globiter_next(&iter));) {
         okb_cslist_push_cstr(list, fname);
     }
-    return okb_glob_deinit(&glob);
+    return okb_globiter_deinit(&iter);
 }
 
 // System command
@@ -982,7 +981,7 @@ OKBAPI struct okb_system_res okb_system(char const* cmd) {
             return (struct okb_system_res){.err = OKB_SUBPROC};
         default:
             if (cmd_err < 0) {
-                okb_error("system(\"%s\") returned %lld", cmd, cmd_err);
+                okb_error("system(\"%s\") returned %lld", cmd, (long long)cmd_err);
                 return (struct okb_system_res){.err = OKB_SUBPROC};
             }
             return (struct okb_system_res){.exit_code = cmd_err};
@@ -994,7 +993,7 @@ OKBAPI enum okb_err okb_run(char const* cmd) {
     struct okb_system_res res = okb_system(cmd);
     if (res.err) return res.err;
     if (res.exit_code != 0) {
-        okb_error("Command returned non-zero exit code: %lld", res.exit_code);
+        okb_error("Command returned non-zero exit code: %lld", (long long)res.exit_code);
         return OKB_SUBPROC;
     }
     return OKB_OK;
@@ -1319,11 +1318,11 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
         // If already rebuilt, then return
         if (rebuild_state && strcmp(rebuild_state, "1") == 0) goto done;
 
-        char const* this_filename = okb_fs_basename(build->argv[0]);
-
 #ifdef _WIN32
         // Windows cleanup
         if (rebuild_state && strcmp(rebuild_state, "2") == 0) {
+            char const* this_filename = okb_fs_basename(build->argv[0]);
+
             // Move .okb_rebuild.pdb -> build.pdb
             {
                 // TODO: Clean this up
@@ -1407,7 +1406,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
         char const* const tmp_build_filename =
             okb_cstr_ends_with(okb_cstring_as_cstr(build->build_out_filename), ".exe")
                 ? ".okb_rebuild.exe"
-                : ".okb_rebuild";
+                : "./.okb_rebuild";
 
         struct okb_cstring cmd = okb_cstring_init();
         struct okb_cslist link_deps = okb_cslist_init();
@@ -1437,10 +1436,17 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
         if (okb_trace_err(err = okb_run(okb_cstring_as_cstr(cmd)))) goto rebuild_error;
 #else
         // Overwrite real build binary with temporary
-        if (okb_trace_err(err = okb_fs_remove_if_exists(build->build_out_filename)))
+        if (okb_trace_err(
+                err = okb_fs_remove_if_exists(okb_cstring_as_cstr(build->build_out_filename))
+            ))
             goto rebuild_error;
-        if (okb_trace_err(err = okb_fs_rename(this_filename, build->build_out_filename)))
+        if (okb_trace_err(
+                err = okb_fs_rename(
+                    tmp_build_filename, okb_cstring_as_cstr(build->build_out_filename)
+                )
+            ))
             goto rebuild_error;
+
 #endif
         exit(0);
 
