@@ -1054,9 +1054,15 @@ OKBAPI void okb_build_set(struct okb_build* build, struct okb_settings settings)
 #undef OKB_SET_
 }
 
+#ifdef _WIN32
+#define OKB_SANITIZE_CFLAGS ""
+#else
+#define OKB_SANITIZE_CFLAGS " -fsanitize=address"
+#endif  // _WIN32
+
 static struct okb_settings const okb_settings_zig_cc = {
     .cc = "zig cc",
-    .cflags = "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g",
+    .cflags = "-D__zig_cc__ -Wall -Wextra -pedantic -Werror -g" OKB_SANITIZE_CFLAGS,
     .lflags = "",
     .compile_in_flag = "-c",
     .compile_out_flag = "-o",
@@ -1066,7 +1072,7 @@ static struct okb_settings const okb_settings_zig_cc = {
 
 static struct okb_settings const okb_settings_clang = {
     .cc = "clang",
-    .cflags = "-Wall -Wextra -pedantic -Werror -g",
+    .cflags = "-Wall -Wextra -pedantic -Werror -g" OKB_SANITIZE_CFLAGS,
     .lflags = "",
     .compile_in_flag = "-c",
     .compile_out_flag = "-o",
@@ -1076,7 +1082,7 @@ static struct okb_settings const okb_settings_clang = {
 
 static struct okb_settings const okb_settings_gcc = {
     .cc = "gcc",
-    .cflags = "-Wall -Wextra -pedantic -Werror -g",
+    .cflags = "-Wall -Wextra -pedantic -Werror -g" OKB_SANITIZE_CFLAGS,
     .lflags = "",
     .compile_in_flag = "-c",
     .compile_out_flag = "-o",
@@ -1120,11 +1126,10 @@ static struct okb_settings const okb_settings_msvc = {
 #define OKB_DEFAULT_BIN_DIR "_bin"
 #define OKB_DEFAULT_OBJ_DIR "_build"
 
-OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, char* argv[]) {
+OKBAPI struct okb_build okb_build_init(const char* build_c_filename, int argc, char* argv[]) {
     assert(argc >= 1);
     assert(argv);
-    struct okb_build* build = okb_alloc(1, sizeof(struct okb_build));
-    *build = (struct okb_build){
+    struct okb_build build = {
         .build_c_filename = okb_cstring_init_with_cstr(build_c_filename),
         .build_out_filename = okb_cstring_init_with_cstr(OKB_DEFAULT_OUT_FILENAME),
         .bin_dir = okb_cstring_init_with_cstr(OKB_DEFAULT_BIN_DIR),
@@ -1143,7 +1148,7 @@ OKBAPI struct okb_build* okb_build_init(const char* build_c_filename, int argc, 
         .argv = argv,
     };
 
-    okb_build_set(build, OKB_DEFAULT_COMPILER_SETTINGS);
+    okb_build_set(&build, OKB_DEFAULT_COMPILER_SETTINGS);
 
     return build;
 }
