@@ -1,5 +1,5 @@
 ---
-name: build-platforms
+name: test-build
 run-name: ${{ github.actor }} is building all platforms
 on: [push]
 jobs:

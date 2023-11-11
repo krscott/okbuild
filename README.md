@@ -1,5 +1,7 @@
 # okbuild
 
+![test-build](https://github.com/krscott/okbuild/actions/workflows/test-build.yml/badge.svg)
+
 Header-only C library for bootstrapping a project build from only a compiler.
 
 ## Usage
