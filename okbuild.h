@@ -1507,6 +1507,8 @@ OKBAPI enum okb_err okb_compile_rule(
 
         struct okb_build_is_old_res res = okb_is_file_older_than_dependencies(obj_cstr, deps);
         err = res.err;
+
+        okb_cslist_deinit(&deps);
         if (err || !res.is_old) goto done;
     }
 

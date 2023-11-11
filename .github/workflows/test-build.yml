@@ -14,10 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: gcc -o build build_example.c -Wall -Wextra -pedantic -Werror -fsanitize=address
-      - run: ./build rebuild
+      - run: touch build_example.c
+      - run: ./build
   build-ubuntu-clang:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: clang -o build build_example.c -Wall -Wextra -pedantic -Werror -fsanitize=address
-      - run: ./build rebuild
+      - run: touch build_example.c
+      - run: ./build
