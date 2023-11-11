@@ -40,6 +40,7 @@
 // msvc does not handle __VA_ARGS__ correctly without ##
 #ifdef __clang__
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
 #endif
 
 #ifndef OKB_LOG_FILE
@@ -67,7 +68,7 @@ enum okb_err {
     OKB_SUBPROC,
 };
 
-OKBAPI char* okb_err_cstr(enum okb_err err) {
+OKBAPI char const* okb_err_cstr(enum okb_err err) {
     switch (err) {
         case OKB_OK:
             return "No error";
@@ -999,6 +1000,20 @@ OKBAPI enum okb_err okb_run(char const* cmd) {
     return OKB_OK;
 }
 
+OKBAPI enum okb_err okb_putenv(char const* cstr_static) {
+#ifdef _WIN32
+    int err = putenv(cstr_static);
+#else
+    int err = putenv((char*)(uintptr_t)cstr_static);
+#endif
+
+    if (err) {
+        okb_error("okb_putenv(\"%s\"): %s (errno=%d)", cstr_static, strerror(errno), errno);
+        return OKB_ERRNO;
+    }
+    return OKB_OK;
+}
+
 // Build
 
 struct okb_build {
@@ -1424,7 +1439,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
             goto rebuild_error;
 
         // Run temporary build binary
-        putenv(OKB_ENVVAR_REBUILD "=1");
+        okb_putenv(OKB_ENVVAR_REBUILD "=1");
         okb_cstring_extend_cstr(&cmd, tmp_build_filename);
 
         // Add CLI arguments
@@ -1434,7 +1449,7 @@ OKBAPI enum okb_err okb_rebuild_script(struct okb_build* build) {
 
 #ifdef _WIN32
         // Spawn another process to overwrite real build binary with temporary
-        putenv(OKB_ENVVAR_REBUILD "=2");
+        okb_putenv(OKB_ENVVAR_REBUILD "=2");
         okb_cstring_clear(&cmd);
         okb_cstring_extend_cstr(&cmd, "start /b ");
         okb_cstring_extend_cstr(&cmd, tmp_build_filename);
@@ -1552,6 +1567,19 @@ OKBAPI bool okb_subcmd(struct okb_build* build, char const* cmd) {
     assert(cmd);
     if (build->argc < 2) return false;
     return strcmp(cmd, build->argv[1]) == 0;
+}
+
+OKBAPI bool okb_is_gcc(struct okb_build* build) {
+    return strcmp(okb_cstring_as_cstr(build->cc), okb_settings_gcc.cc) == 0;
+}
+
+OKBAPI bool okb_is_clang(struct okb_build* build) {
+    return strcmp(okb_cstring_as_cstr(build->cc), okb_settings_clang.cc) == 0 ||
+           strcmp(okb_cstring_as_cstr(build->cc), okb_settings_zig_cc.cc) == 0;
+}
+
+OKBAPI bool okb_is_msvc(struct okb_build* build) {
+    return strcmp(okb_cstring_as_cstr(build->cc), okb_settings_msvc.cc) == 0;
 }
 
 #endif  // OKBUILD_H_

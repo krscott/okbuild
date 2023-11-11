@@ -2,6 +2,29 @@
 
 #define APP_SRC "src_example/example"
 
+static char const* extra_warnings =
+    " -Wbad-function-cast"
+    " -Wcast-align"
+    " -Wcast-qual"
+    " -Wformat=2"
+    " -Wmissing-declarations"
+    " -Wmissing-prototypes"
+    " -Wnested-externs"
+    " -Wpointer-arith"
+    " -Wredundant-decls"
+    " -Wsequence-point"
+    " -Wshadow"
+    " -Wstrict-prototypes"
+    " -Wswitch"
+    " -Wundef"
+    " -Wunreachable-code"
+    " -Wunused-but-set-parameter"
+    " -Wwrite-strings"
+    " -Wpointer-to-int-cast"
+    " -Wint-to-pointer-cast";
+
+static char const* gcc_extra_warnings = " -Wlogical-op";
+
 static void clean(void) {
     okb_info("Cleaning build files");
 
@@ -25,6 +48,13 @@ int main(int argc, char* argv[]) {
 
     if (okb_subcmd(&build, "rebuild")) {
         build.force_rebuild = true;
+    }
+
+    if (okb_is_gcc(&build) || okb_is_clang(&build)) {
+        okb_cstring_extend_cstr(&build.cflags, extra_warnings);
+    }
+    if (okb_is_gcc(&build)) {
+        okb_cstring_extend_cstr(&build.cflags, gcc_extra_warnings);
     }
 
     // Rebuild build script if okbuild.h changes
